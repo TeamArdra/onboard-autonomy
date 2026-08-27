@@ -26,6 +26,11 @@ doesn't exist yet. See that node's module docstring.
 
 ## Build (on the Jetson, ROS 2 Humble, colcon workspace)
 
+If `colcon` isn't installed and `sudo apt-get install python3-colcon-common-extensions`
+isn't available (no password for sudo), it also installs fine with pip,
+no root needed: `pip3 install --user colcon-common-extensions`, then make
+sure `~/.local/bin` is on `PATH`.
+
 ```sh
 mkdir -p ~/ros2_ws/src
 ln -s ~/onboard-autonomy/nidar_autonomy ~/ros2_ws/src/nidar_autonomy
@@ -35,6 +40,18 @@ source /opt/ros/humble/setup.bash
 colcon build --packages-select nidar_airmouse nidar_autonomy
 source install/setup.bash
 ```
+
+**Built and verified working on the real Jetson, 2026-08-28** — all
+three nodes run, and a real `ros2 topic pub` round-trip was tested:
+`start` on `/gcs/command` moved `/mission/state` from `idle` to
+`entering`; an invalid command (`waypoint_edit`) was correctly rejected
+and logged without affecting state; `abort` correctly moved state to
+`aborted`. See `../CLAUDE.md`'s Current Project Phase section / this
+repo's git log for the one build gotcha that came up
+(`setup.cfg` was missing — without it, `setup.py install` puts
+console_scripts under `bin/` instead of `lib/nidar_autonomy/`, which
+`ros2 run`/`ros2 pkg executables` can't find; this is a standard,
+documented ROS 2 `ament_python` requirement, now fixed).
 
 ## Run
 
