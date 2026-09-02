@@ -83,6 +83,23 @@ something to work around on the GCS side.
 |---|---|---|
 | `/gcs/command` | `std_msgs/String` | exactly `"start"` or `"abort"` — nothing else is a valid operator action, ever |
 
+## Integration Checkpoints (read before any flight/arming/MAVLink work)
+
+The path from the current software-only integration to a full autonomous
+mission is broken into 10 gated checkpoints, defined in
+`../CHECKPOINT/INTEGRATION_CHECKPOINTS.md` (sibling `CHECKPOINT/`
+directory at the workspace root, alongside this repo and `custom-gcs`).
+That file is canonical for checkpoint definitions, PASS/FAIL criteria,
+and current active checkpoint — this repo's Hard Safety Rules below are
+the standing rules that apply throughout, not a substitute for reading
+that file first. Checkpoints 2 onward (Jetson↔Pixhawk ARM/DISARM, GCS→ARM,
+GCS→ABORT, autonomous takeoff, controlled flight, in-flight abort/
+failsafe, indoor autonomy, perception, full mission) are almost entirely
+`onboard-autonomy`'s responsibility to implement. Check
+`../CHECKPOINT/CURRENT_STATE.md` §0 for which checkpoint is currently
+active before starting flight-adjacent work — do not start checkpoint
+*N+1* work while checkpoint *N* is still unverified.
+
 ## Hard Safety Rules (non-negotiable, checked before every commit that touches flight)
 
 1. **No code path in this repo may arm the vehicle or command motor

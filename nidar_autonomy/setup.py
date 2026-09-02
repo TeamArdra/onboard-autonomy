@@ -25,6 +25,7 @@ setup(
             "command_node = nidar_autonomy.command_node:main",
             "mission_state_node = nidar_autonomy.mission_state_node:main",
             "heartbeat_node = nidar_autonomy.heartbeat_node:main",
+            "checkpoint2_arm_test = nidar_autonomy.checkpoint2_arm_test:main",
         ],
     },
 )
