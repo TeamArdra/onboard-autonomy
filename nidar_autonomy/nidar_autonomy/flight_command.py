@@ -89,11 +89,29 @@ class FlightCommandClient:
         node: Node,
         service_timeout_sec: float = 5.0,
         state_confirm_timeout_sec: float = _DEFAULT_STATE_CONFIRM_TIMEOUT_SEC,
+        already_spinning: bool = False,
     ) -> None:
+        """`already_spinning`: set True when `node` is already being spun
+        by an executor elsewhere (e.g. called from inside a subscription
+        callback under `rclpy.spin(node)`, as mission_state_node.py does).
+        In that case this class must NOT call rclpy.spin_once/
+        spin_until_future_complete itself -- doing so creates a second,
+        nested executor for the same node from inside that node's own
+        callback dispatch, which is a known rclpy deadlock/timeout
+        hazard (the nested wait can time out even though the FCU request
+        genuinely went through, which is worse than useless for
+        arm/disarm code -- it looks like a clean failure but isn't).
+        Instead, this class just polls with plain time.sleep() and lets
+        the *external* executor keep processing the state/service-
+        response callbacks that make progress possible. Default False
+        preserves the exact behavior already verified on real hardware
+        for checkpoint2_arm_test.py, which calls this from a plain
+        script with no executor already spinning."""
         self._node = node
         self._log = node.get_logger()
         self._service_timeout_sec = service_timeout_sec
         self._state_confirm_timeout_sec = state_confirm_timeout_sec
+        self._already_spinning = already_spinning
 
         self._arming_client = node.create_client(CommandBool, ARMING_SERVICE)
 
@@ -147,7 +165,10 @@ class FlightCommandClient:
         while time.monotonic() < deadline:
             if self.is_armed == expected:
                 return True
-            rclpy.spin_once(self._node, timeout_sec=0.1)
+            if self._already_spinning:
+                time.sleep(0.05)
+            else:
+                rclpy.spin_once(self._node, timeout_sec=0.1)
         return self.is_armed == expected
 
     def arm(self) -> ArmingResult:
@@ -214,9 +235,14 @@ class FlightCommandClient:
         request = CommandBool.Request()
         request.value = value
         future = self._arming_client.call_async(request)
-        rclpy.spin_until_future_complete(
-            self._node, future, timeout_sec=self._service_timeout_sec
-        )
+        if self._already_spinning:
+            deadline = time.monotonic() + self._service_timeout_sec
+            while not future.done() and time.monotonic() < deadline:
+                time.sleep(0.05)
+        else:
+            rclpy.spin_until_future_complete(
+                self._node, future, timeout_sec=self._service_timeout_sec
+            )
 
         if not future.done():
             # A timed-out future does not prove the FCU never received or
