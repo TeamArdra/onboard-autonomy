@@ -46,3 +46,21 @@ class MissionStateMachine:
 
         self._state = "entering"
         return self._state
+
+    def handle_fcu_disarmed(self) -> str:
+        """Called when /mavros/state reports the FCU has disarmed on its
+        own (e.g. ArduCopter's ground-idle auto-disarm after arming with
+        no throttle/setpoint stream ever sent) -- NOT as a result of our
+        own commanded DISARM, which already moves this state machine via
+        handle_command("abort") before the disarm is even requested (see
+        mission_state_node.py). Only "entering" implies an arm attempt
+        this node itself made and is still relying on being armed, so
+        only "entering" transitions here (to "aborted"); every other
+        state is a no-op. Without this, an unsolicited FCU disarm would
+        leave the reported state stuck on "entering" (i.e. an
+        active/armed mission) indefinitely, which is exactly the kind of
+        state machine lying about drone reality this module's docstring
+        already says not to do."""
+        if self._state == "entering":
+            self._state = "aborted"
+        return self._state

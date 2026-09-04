@@ -41,19 +41,44 @@ is already being spun by an executor elsewhere -- see flight_command.py's
 already_spinning docstring for the deadlock/timeout hazard that avoids.
 A lock serializes arm/disarm attempts so a start immediately followed by
 an abort can't race two concurrent FCU requests.
+
+UNSOLICITED DISARM (2026-09-03, late-session): a real bench test showed the FCU can
+disarm itself a few seconds after a successful ARM (observed ~5s after
+arming, consistent with ArduCopter's stock ground-idle auto-disarm --
+DISARM_DELAY=10 confirmed set -- since nothing here sends a throttle/
+setpoint stream, per this repo's Phase 8/Checkpoint 5+ scope). Nothing
+in this node previously noticed that: /mavros/state was only consulted
+by FlightCommandClient during the few seconds right after a commanded
+arm()/disarm() call, so mission state stayed "entering" -- falsely
+implying an active armed mission -- for as long as the vehicle sat
+disarmed until an operator eventually sent "abort". This node now keeps
+its own independent /mavros/state subscription (separate from
+FlightCommandClient's internal one -- multiple subscribers to the same
+topic is normal) purely to detect an armed:true -> armed:false
+transition that was NOT preceded by mission state leaving "entering"
+(our own commanded disarm always transitions state to "aborted" via
+"abort" first, before disarm() is even called -- see
+_on_validated_command -- so any true->false transition seen while state
+is still "entering" is, by construction, the FCU's own doing). See
+state_machine.py's handle_fcu_disarmed() for the (pure, tested) logic --
+only "entering" transitions, everything else is a no-op, so this can
+never re-arm, never overrides an operator's explicit abort/state, and
+never touches the FCU itself.
 """
 
 from __future__ import annotations
 
 import threading
+from typing import Optional
 
 import rclpy
 from rclpy.node import Node
+from mavros_msgs.msg import State
 from std_msgs.msg import String
 
 from .arm_trigger import should_attempt_arm, should_attempt_disarm
 from .arming_guard import ArmRejected
-from .flight_command import FlightCommandClient
+from .flight_command import STATE_TOPIC, FlightCommandClient
 from .state_machine import MissionStateMachine
 from .topics import MISSION_STATE_TOPIC, VALIDATED_COMMAND_TOPIC
 
@@ -75,6 +100,10 @@ class MissionStateNode(Node):
             else FlightCommandClient(self, already_spinning=True)
         )
         self._flight_lock = threading.Lock()
+        self._last_fcu_armed: Optional[bool] = None
+        self._fcu_state_sub = self.create_subscription(
+            State, STATE_TOPIC, self._on_fcu_state, 10
+        )
         self.get_logger().info(f"Starting in state: {self._machine.state!r}")
 
     def _on_validated_command(self, msg: String) -> None:
@@ -111,6 +140,23 @@ class MissionStateNode(Node):
         with self._flight_lock:
             result = self._flight.disarm()
         self.get_logger().info(f"[mission_state_node] Checkpoint 4: DISARM attempt: {result}")
+
+    def _on_fcu_state(self, msg: State) -> None:
+        previous_armed = self._last_fcu_armed
+        self._last_fcu_armed = msg.armed
+        if previous_armed is True and msg.armed is False:
+            previous_mission_state = self._machine.state
+            new_state = self._machine.handle_fcu_disarmed()
+            if new_state != previous_mission_state:
+                self.get_logger().warning(
+                    "FCU disarmed on its own (not via a DISARM we "
+                    f"requested) while mission state was "
+                    f"{previous_mission_state!r} -- treating the mission "
+                    f"as aborted (mission state: {previous_mission_state!r} "
+                    f"-> {new_state!r}). Likely cause: ArduCopter's own "
+                    "ground-idle auto-disarm, since no throttle/setpoint "
+                    "stream exists yet -- see CHECKPOINT/CURRENT_STATE.md."
+                )
 
     def _publish_state(self) -> None:
         self._publisher.publish(String(data=self._machine.state))

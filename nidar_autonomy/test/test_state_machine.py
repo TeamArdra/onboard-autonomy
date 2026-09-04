@@ -52,3 +52,22 @@ def test_invalid_command_raises(bad_command):
     m = MissionStateMachine()
     with pytest.raises(InvalidCommandError):
         m.handle_command(bad_command)
+
+
+def test_fcu_disarm_while_entering_goes_to_aborted():
+    m = MissionStateMachine()
+    m.handle_command("start")
+    assert m.handle_fcu_disarmed() == "aborted"
+    assert m.state == "aborted"
+
+
+def test_fcu_disarm_while_idle_is_a_noop():
+    m = MissionStateMachine()
+    assert m.handle_fcu_disarmed() == "idle"
+
+
+def test_fcu_disarm_while_already_aborted_is_a_noop():
+    m = MissionStateMachine()
+    m.handle_command("start")
+    m.handle_command("abort")
+    assert m.handle_fcu_disarmed() == "aborted"
