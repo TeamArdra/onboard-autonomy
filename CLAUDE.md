@@ -140,9 +140,23 @@ Planned subsystems, **only the first three have any code yet** (see
 - **Command handling** (`nidar_autonomy/command_node.py`) — subscribes
   `/gcs/command`, validates it's exactly start/abort, drives the mission
   state machine.
-- **Mission state machine** (`nidar_autonomy/mission_state_node.py`) —
-  publishes `/mission/state`, owns the idle→entering→searching→exiting→
-  complete/aborted transitions.
+- **Mission state machine** (`nidar_autonomy/mission_state_node.py` /
+  `state_machine.py`) — publishes `/mission/state`, owns the
+  idle→entering→searching→exiting→complete/aborted transitions. As of
+  Checkpoint 3/4 (2026-09-03), this node also owns a `FlightCommandClient`
+  and turns a validated `"start"`/`"abort"` into a real ARM/DISARM
+  attempt — see `arm_trigger.py` (pure decision logic: when a command
+  should trigger arm/disarm) and `flight_command.py` (the mavros-facing
+  ARM/DISARM client, service-level ack + `/mavros/state` confirmation,
+  bounded disarm retry, never retries arm). `arming_guard.py` holds the
+  pure local precondition check (`check_arm_preconditions`) consulted
+  before any arm attempt reaches mavros at all. This node also watches
+  `/mavros/state` independently to detect the FCU disarming itself
+  (e.g. ArduCopter's ground-idle auto-disarm) and reflects that into
+  `/mission/state` via `state_machine.handle_fcu_disarmed()` — see that
+  method's docstring and `CHECKPOINT/CURRENT_STATE.md` §19. This is the
+  **only** code in the repo permitted to call mavros's arming service —
+  see Hard Safety Rule 1.
 - **Heartbeat** (`nidar_autonomy/heartbeat_node.py`) — publishes
   `/gcs/heartbeat` at 1 Hz. Deliberately the simplest node in the repo —
   per `DATA_MODELS.md` §6, this should be the first thing proven working
@@ -167,27 +181,38 @@ Planned subsystems, **only the first three have any code yet** (see
 
 ## Current Project Phase
 
-**Phase 0: scaffolding.** As of 2026-08-27:
+**Past Phase 0 scaffolding — Checkpoints 1–2 PASSED, Checkpoints 3/4
+implemented but not yet formally PASSED.** See
+`../CHECKPOINT/CURRENT_STATE.md` §0 for the authoritative, frequently-
+updated status; this section is a slower-moving summary and can lag it.
 
 - `nidar_airmouse/`: a ROS 2 package containing exactly one message
   definition, `SurvivorDetection.msg` (`int32 survivor_id`,
   `float64 x`, `float64 y`, `float64 confidence`), matching
-  `custom-gcs/docs/DATA_MODELS.md` §5 exactly. This exists because the
-  real `custom-gcs` backend already expects to subscribe to
-  `nidar_airmouse/SurvivorDetection` and fails without it — see
-  `../custom-gcs/PROGRESS.md` (2026-08-27 entry) for how that was found.
-  **Not yet built/installed on the Jetson — see `nidar_airmouse/README.md`.**
-- `nidar_autonomy/`: a ROS 2 Python package with three nodes
-  (`command_node`, `mission_state_node`, `heartbeat_node`) implementing
-  only the command-handling / state-reporting / heartbeat pieces of the
-  table above. **No SLAM, no detection, no flight control yet.** The
-  mission state machine currently only tracks
-  idle/searching/complete/aborted in memory — it does not yet drive any
-  real drone behavior, because there is no exploration/path-planning
-  subsystem yet for it to drive.
-- Nothing in this repo has been run against the real Pixhawk yet. It has
-  not been tested at all yet, against sim or hardware — that's the
-  immediate next step, not "done."
+  `custom-gcs/docs/DATA_MODELS.md` §5 exactly. Builds and installs on the
+  Jetson (verified via `colcon build`) — see `nidar_airmouse/README.md`.
+- `nidar_autonomy/`: a ROS 2 Python package with `command_node`,
+  `mission_state_node`, and `heartbeat_node`. Beyond Phase 0's original
+  command-handling/state-reporting/heartbeat scope, this package now also
+  contains the real Jetson→Pixhawk ARM/DISARM path
+  (`flight_command.py`, `arming_guard.py`, `arm_trigger.py`, wired into
+  `mission_state_node.py` — see the Architecture section above) —
+  real bench ARM/DISARM has been demonstrated against the live Pixhawk,
+  both standalone (Checkpoint 2) and driven by real GCS `start`/`abort`
+  (Checkpoints 3/4). **Still no SLAM, no detection, no autonomous flight
+  control (no setpoint/velocity commands ever sent)** — the mission state
+  machine still only reaches idle/entering/aborted, because the
+  exploration/path-planning subsystem that would drive
+  searching→exiting→complete does not exist yet.
+- `checkpoint2_arm_test.py`: a standalone bench-test harness for
+  Checkpoint 2, kept for direct ARM/DISARM testing independent of the
+  GCS/mission-state chain — not part of the normal runtime node set.
+- Everything above has been run against the real Pixhawk on the bench
+  (props off/restrained) at least once — see `CHECKPOINT/CURRENT_STATE.md`
+  §17–§19 for the dated verification record. Autonomous flight (Phase 8+)
+  has not been attempted and must not be, absent an explicit safety
+  review — see Hard Safety Rules below and
+  `CHECKPOINT/INTEGRATION_CHECKPOINTS.md` Checkpoint 5 onward.
 
 ## Rules Claude Must Follow When Modifying This Repository
 

@@ -1,9 +1,12 @@
 # nidar_autonomy
 
-Phase 0 onboard autonomy nodes. **Command handling, mission state
-reporting, and heartbeat only** — no SLAM, no survivor detection, no
-flight control yet. See `../CLAUDE.md` for full scope and the hard
-safety rules that govern anything added here later.
+Onboard autonomy nodes: command handling, mission state, heartbeat, and
+the real Jetson→Pixhawk ARM/DISARM path. **Still no SLAM, no survivor
+detection, no autonomous flight-control (setpoint) issuance.** See
+`../CLAUDE.md` for full scope and the hard safety rules that govern
+anything added here later, and `../../CHECKPOINT/CURRENT_STATE.md` for
+the dated, authoritative verification record (this file is a slower-
+moving summary and can lag it).
 
 ## Nodes
 
@@ -13,9 +16,21 @@ safety rules that govern anything added here later.
 - **`mission_state_node`** — listens to that internal sanitized topic
   (never the raw `/gcs/command`), owns the mission state machine
   (`state_machine.py`, pure logic, no ROS dependency), publishes
-  `/mission/state` at 2 Hz.
+  `/mission/state` at 2 Hz. Also owns a `FlightCommandClient`
+  (`flight_command.py`) and turns a validated `"start"`/`"abort"` into a
+  real ARM/DISARM attempt against the Pixhawk via mavros (see
+  `arm_trigger.py` for the pure trigger logic and `arming_guard.py` for
+  the local precondition check) — real bench ARM/DISARM has been
+  demonstrated this way against the live Pixhawk. Also independently
+  watches `/mavros/state` to detect the FCU disarming itself (e.g.
+  ArduCopter's ground-idle auto-disarm) and reflects that into
+  `/mission/state` rather than leaving it stuck reporting an active
+  mission — see `state_machine.handle_fcu_disarmed()`.
 - **`heartbeat_node`** — publishes `/gcs/heartbeat` at 1 Hz. No inputs,
-  no logic. Get this one working end-to-end against the real GCS first.
+  no logic.
+- **`checkpoint2_arm_test.py`** — a standalone bench-test harness used to
+  first prove ARM/DISARM independent of the GCS/mission-state chain; not
+  part of the normal runtime node set.
 
 ## Known limitation
 
@@ -61,8 +76,9 @@ ros2 run nidar_autonomy command_node
 ros2 run nidar_autonomy mission_state_node
 ```
 
-Then, with `rosbridge_server` running (see `../../NIDAR-Hardware-Bringup/`)
-and `custom-gcs`'s backend pointed at this Jetson, `/health` and
+Then, with `rosbridge_server` running (see `~/NIDAR-Hardware-Bringup/`
+for the original bring-up notes, superseded by `../../CHECKPOINT/` for
+current status) and `custom-gcs`'s backend pointed at this Jetson, `/health` and
 `/api/telemetry` should start showing `mission_state` change when you
 send a real `"start"`/`"abort"` from `custom-gcs`'s `/docs` Swagger UI —
 that round trip (GCS button → this repo → back into `/api/telemetry`) is
@@ -74,12 +90,16 @@ The state machine logic (`state_machine.py`) is pure Python, no ROS
 needed to test it:
 
 ```sh
-cd ~/onboard-autonomy/nidar_autonomy
-PYTHONPATH=. python3 -m pytest test/ -q
+cd ~/NIDAR/onboard-autonomy/nidar_autonomy
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=. python3 -m pytest test/ -q
 ```
 
-12 tests, currently passing. The nodes themselves (`*_node.py`) are thin
-ROS wrappers around this and are not yet covered by an integration test
-— that needs a running `rosbridge_server` + real `ros2 run`, not just
-`pytest`. Doing that (equivalent to `custom-gcs/sim`'s
-`test_server_integration.py`) is a reasonable next step, not done yet.
+23 tests, currently passing (state machine transitions, including the
+FCU-unsolicited-disarm handling; command validation; arming precondition
+guard). The nodes themselves (`*_node.py`) are thin ROS wrappers around
+this and are not yet covered by an automated integration test — that
+needs a running `rosbridge_server` + real `ros2 run`, not just `pytest`.
+Doing that (equivalent to `custom-gcs/sim`'s
+`test_server_integration.py`) is a reasonable next step, not done yet;
+real hardware bench testing has substituted for it so far — see
+`../../CHECKPOINT/CURRENT_STATE.md`.

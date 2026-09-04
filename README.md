@@ -10,30 +10,53 @@ over `rosbridge_server`.
 interface contract (owned jointly with `custom-gcs`, not redefined here),
 and hard safety rules for anything that touches real flight.
 
-## What exists right now (Phase 0, started 2026-08-27)
+**Read `../CHECKPOINT/CURRENT_STATE.md` and `../CHECKPOINT/NEXT.md`
+before doing any work** — they are the authoritative, dated record of
+what has actually been verified against real hardware versus merely
+implemented, and are updated far more often than this file.
+
+## What exists right now
+
+Checkpoints 1–2 (GCS↔autonomy software integration; Jetson↔Pixhawk
+ARM/DISARM) are **PASSED**. Checkpoints 3–4 (GCS `start`→ARM,
+GCS `abort`→DISARM) are implemented and demonstrated on real hardware but
+**not yet formally PASSED** — see
+`../CHECKPOINT/INTEGRATION_CHECKPOINTS.md` for the specific outstanding
+criterion on each. No SLAM, no detection, no autonomous flight control.
 
 - `nidar_airmouse/` — one ROS 2 message (`SurvivorDetection.msg`),
-  needed because the real GCS backend expects it and fails without it.
-  Not yet built/installed on the Jetson.
-- `nidar_autonomy/` — three ROS 2 nodes: command handling, mission state
-  reporting, heartbeat. Nothing else. Not yet built, run, or tested
-  against real ROS/rosbridge (the state-machine logic has unit tests and
-  they pass; the nodes themselves haven't been run yet).
+  needed because the real GCS backend expects it. Builds and installs on
+  the Jetson.
+- `nidar_autonomy/` — ROS 2 nodes for command handling
+  (`command_node.py`), mission state (`mission_state_node.py` /
+  `state_machine.py`), heartbeat (`heartbeat_node.py`), and the real
+  Jetson→Pixhawk ARM/DISARM path (`flight_command.py`, `arming_guard.py`,
+  `arm_trigger.py`). Real bench ARM/DISARM (props off/restrained) has
+  been demonstrated against the live Pixhawk both standalone and driven
+  by real GCS `start`/`abort` commands. `checkpoint2_arm_test.py` is a
+  standalone bench-test harness, not part of the normal runtime node set.
+  Unit tests: `cd nidar_autonomy && PYTHONPATH=. python3 -m pytest test/ -q`
+  (after sourcing a ROS 2 Humble environment — see `../source_ros.sh`).
 
 ## What does NOT exist yet
 
 SLAM, survivor detection, exploration/path planning, and — the biggest
-one — actually sending flight/motor commands to make the vehicle fly
+one — actually sending flight/motor setpoints to make the vehicle fly
 autonomously. See `CLAUDE.md`'s Architecture section for the honest
 status of each. None of these were started here because they're either
 large algorithmic subsystems needing a real design pass, or (for flight
 commands specifically) too safety-critical to scaffold speculatively —
 see `CLAUDE.md`'s Hard Safety Rules.
 
-## Related repos
+## Related repos and reference material
 
 - `../custom-gcs/` — the GCS this repo serves telemetry to and takes
   exactly two commands from.
-- `../NIDAR-Hardware-Bringup/` — the Pixhawk↔Jetson hardware/network
-  bring-up notes (MAVROS, rosbridge_server setup). Read this before
-  trying to run anything here against real hardware.
+- `../CHECKPOINT/` — the canonical, dated checkpoint/state record for
+  the whole `~/NIDAR/` workspace (this repo, `custom-gcs`, and the
+  overall integration roadmap).
+- `~/NIDAR-Hardware-Bringup/` — older Pixhawk↔Jetson hardware/network
+  bring-up notes (MAVROS, rosbridge_server setup) from before this repo
+  moved under `~/NIDAR/`. Superseded by `../CHECKPOINT/` for anything
+  it overlaps with, but the original bring-up notes are still there if
+  needed. Not a subdirectory of this repo — it lives at `~/NIDAR-Hardware-Bringup`, not `../NIDAR-Hardware-Bringup`.

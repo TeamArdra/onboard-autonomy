@@ -46,7 +46,8 @@ Verify it installed correctly:
 ros2 interface show nidar_airmouse/msg/SurvivorDetection
 ```
 
-**This has not been built or tested yet** — it's written to match the
-documented schema and the error seen in the real rosbridge log, but
-hasn't been run through `colcon build` for real. Do that before assuming
-it works.
+**Built and installed successfully via `colcon build` on the Jetson** —
+verified as part of `onboard-autonomy`'s regular build
+(`colcon build --packages-select nidar_airmouse nidar_autonomy`, rc=0).
+Nothing publishes `SurvivorDetection` messages yet (see above) — that
+remains a real gap, just not a build/install one.
