@@ -60,7 +60,55 @@ class MissionStateMachine:
         leave the reported state stuck on "entering" (i.e. an
         active/armed mission) indefinitely, which is exactly the kind of
         state machine lying about drone reality this module's docstring
-        already says not to do."""
+        already says not to do.
+
+        Deliberately does NOT go any further than "aborted" -- see
+        handle_ground_reset_confirmed() for why an *unsolicited* disarm
+        must never, by itself, make the mission restartable again."""
+        return self._to_aborted_if_entering()
+
+    def handle_arm_failed(self) -> str:
+        """Called when an ARM attempt this node itself made did not
+        cleanly succeed -- refused before ever reaching the FCU
+        (arming_guard.ArmRejected), rejected by the FCU, or accepted but
+        not confirmed via /mavros/state (see flight_command.ArmingResult).
+        Same reasoning as handle_fcu_disarmed(): "entering" must not keep
+        claiming an active/armed mission when the vehicle never actually
+        armed, so this moves "entering" -> "aborted" and is a no-op
+        everywhere else. mission_state_node.py always follows this with a
+        forced DISARM attempt, so the vehicle ends up in a confirmed,
+        known-safe (disarmed) state either way."""
+        return self._to_aborted_if_entering()
+
+    def _to_aborted_if_entering(self) -> str:
         if self._state == "entering":
             self._state = "aborted"
+        return self._state
+
+    def handle_ground_reset_confirmed(self) -> str:
+        """Called when a DISARM *this node itself commanded* (as a direct
+        consequence of "abort", or of handle_arm_failed()'s forced
+        disarm) is confirmed via the real /mavros/state.armed value --
+        never from a timer, a guess, or the unsolicited-disarm path
+        (handle_fcu_disarmed() never calls this). This is the ONLY way
+        "aborted" ever becomes "idle" again -- a bare "start" command
+        can't do it (see test_start_while_aborted_is_a_noop), and an
+        unconfirmed/failed commanded disarm leaves the state at "aborted"
+        indefinitely, forcing a human/physical intervention rather than
+        guessing the vehicle is safe. No-op in every state but "aborted",
+        so a stray or duplicate disarm confirmation while already
+        idle/entering can never fabricate a transition.
+
+        Scope note: today, "aborted" is only ever reached while the
+        vehicle is disarmed-or-being-disarmed on the bench (no takeoff/
+        setpoint code exists yet -- see this repo's CLAUDE.md "Current
+        Project Phase"), so a confirmed disarm here is also, in practice,
+        a confirmed *ground* state. Once real flight exists (Phase 8 /
+        Checkpoint 7+), this assumption must be revisited: an in-flight
+        abort must not simply mean "immediately disarm" (see
+        flight_command_interface.FlightCommandInterface.abort()'s
+        docstring), and this reset logic will need a real
+        airborne/grounded distinction, not just "is it disarmed"."""
+        if self._state == "aborted":
+            self._state = "idle"
         return self._state

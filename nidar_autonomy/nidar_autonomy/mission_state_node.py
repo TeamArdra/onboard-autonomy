@@ -42,6 +42,25 @@ already_spinning docstring for the deadlock/timeout hazard that avoids.
 A lock serializes arm/disarm attempts so a start immediately followed by
 an abort can't race two concurrent FCU requests.
 
+MISSION RESET (2026-09-08): "aborted" used to be terminal -- the only way
+to restart a mission after an abort was to restart this whole node
+(recreating MissionStateMachine fresh). This node now also drives the
+one and only path back to "idle": whenever a DISARM *this node itself
+commanded* (from "abort", or from a forced disarm after a failed/
+unconfirmed ARM -- see below) is confirmed via the real
+/mavros/state.armed value, state_machine.handle_ground_reset_confirmed()
+moves "aborted" -> "idle", making a subsequent "start" work again without
+any process restart. An unsolicited FCU disarm (see "UNSOLICITED DISARM"
+below) deliberately does NOT go through this path -- it only ever reaches
+"aborted", never "idle" -- and a commanded disarm that fails to confirm
+leaves the state at "aborted" indefinitely (see
+state_machine.handle_ground_reset_confirmed()'s docstring for why
+guessing would be unsafe). Relatedly, a failed/unconfirmed ARM attempt
+(_attempt_arm()) now also drives the mission to "aborted" and forces a
+DISARM, via the same confirm-and-maybe-reset path as "abort" -- an ARM
+that didn't cleanly succeed must not leave /mission/state claiming
+"entering" (i.e. an active, armed mission) when the vehicle never armed.
+
 UNSOLICITED DISARM (2026-09-03, late-session): a real bench test showed the FCU can
 disarm itself a few seconds after a successful ARM (observed ~5s after
 arming, consistent with ArduCopter's stock ground-idle auto-disarm --
@@ -78,7 +97,7 @@ from std_msgs.msg import String
 
 from .arm_trigger import should_attempt_arm, should_attempt_disarm
 from .arming_guard import ArmRejected
-from .flight_command import STATE_TOPIC, FlightCommandClient
+from .flight_command import STATE_TOPIC, ArmingResult, FlightCommandClient
 from .state_machine import MissionStateMachine
 from .topics import MISSION_STATE_TOPIC, VALIDATED_COMMAND_TOPIC
 
@@ -125,6 +144,7 @@ class MissionStateNode(Node):
             threading.Thread(target=self._attempt_disarm, daemon=True).start()
 
     def _attempt_arm(self) -> None:
+        result: Optional[ArmingResult]
         with self._flight_lock:
             try:
                 result = self._flight.arm()
@@ -133,13 +153,53 @@ class MissionStateNode(Node):
                     f"[mission_state_node] Checkpoint 3: ARM refused before "
                     f"reaching the FCU: {exc}"
                 )
-                return
-        self.get_logger().info(f"[mission_state_node] Checkpoint 3: ARM attempt: {result}")
+                result = None
+
+        if result is not None:
+            self.get_logger().info(f"[mission_state_node] Checkpoint 3: ARM attempt: {result}")
+            if result.success and result.state_confirmed:
+                return  # genuinely armed -- mission stays "entering"
+
+        previous = self._machine.state
+        new_state = self._machine.handle_arm_failed()
+        if new_state != previous:
+            self.get_logger().warning(
+                f"[mission_state_node] ARM did not cleanly succeed/confirm "
+                f"-- mission state {previous!r} -> {new_state!r}; forcing "
+                "DISARM to reach a known-safe state."
+            )
+        with self._flight_lock:
+            disarm_result = self._flight.disarm()
+        self.get_logger().info(
+            f"[mission_state_node] Forced DISARM after failed ARM: {disarm_result}"
+        )
+        self._maybe_reset_after_disarm(disarm_result)
 
     def _attempt_disarm(self) -> None:
         with self._flight_lock:
             result = self._flight.disarm()
         self.get_logger().info(f"[mission_state_node] Checkpoint 4: DISARM attempt: {result}")
+        self._maybe_reset_after_disarm(result)
+
+    def _maybe_reset_after_disarm(self, result: ArmingResult) -> None:
+        """Common tail for every commanded-disarm path (operator abort,
+        or a forced disarm after a failed arm): only a disarm that the
+        FCU actually accepted AND that /mavros/state confirmed is treated
+        as "safe to make restartable again" -- see
+        state_machine.handle_ground_reset_confirmed()'s docstring. An
+        ambiguous/unconfirmed result leaves the mission at "aborted" on
+        purpose, matching flight_command.py's own "don't guess, escalate"
+        posture for a disarm that didn't confirm."""
+        if not (result.success and result.state_confirmed):
+            return
+        previous = self._machine.state
+        new_state = self._machine.handle_ground_reset_confirmed()
+        if new_state != previous:
+            self.get_logger().info(
+                "[mission_state_node] Commanded DISARM confirmed via "
+                f"/mavros/state -- mission is restartable again (mission "
+                f"state: {previous!r} -> {new_state!r})."
+            )
 
     def _on_fcu_state(self, msg: State) -> None:
         previous_armed = self._last_fcu_armed
