@@ -91,6 +91,75 @@ def test_disarm_raises_when_client_reports_rejected():
         controller.disarm()
 
 
+# -- full (success, state_confirmed) matrix, both directions ---------------
+#
+# flight_command.ArmingResult can legitimately land on any of the four
+# (success, state_confirmed) combinations (see _set_arming's "NOTE:
+# /mavros/state nonetheless shows the requested state -- treat with
+# caution" branch for how success=False, state_confirmed=True arises for
+# real) -- MAVROSFlightController._raise_if_not_confirmed requires BOTH
+# to be True, so every other combination, for both arm() and disarm(),
+# must raise ArmCommandFailed. Only (True, True) -- already covered by
+# test_arm_delegates_to_client_and_succeeds /
+# test_disarm_delegates_to_client_and_succeeds -- must not.
+
+
+def test_arm_raises_when_client_reports_outright_rejected():
+    # success=False, state_confirmed=False: the FCU rejected the request
+    # and the state agrees it never armed.
+    client = FakeFlightCommandClient(is_armed=False)
+    client.next_arm_result = FakeArmingResult(
+        requested=True, success=False, state_confirmed=False, message="rejected"
+    )
+    controller = MAVROSFlightController(client)
+    with pytest.raises(ArmCommandFailed):
+        controller.arm()
+
+
+def test_disarm_raises_when_client_reports_unconfirmed():
+    # success=True, state_confirmed=False: FCU accepted the disarm but
+    # /mavros/state never caught up within the confirm timeout.
+    client = FakeFlightCommandClient(is_armed=True)
+    client.next_disarm_result = FakeArmingResult(
+        requested=False, success=True, state_confirmed=False, message="mismatch"
+    )
+    controller = MAVROSFlightController(client)
+    with pytest.raises(ArmCommandFailed):
+        controller.disarm()
+
+
+def test_arm_raises_when_rejected_but_state_confirms_anyway():
+    # success=False, state_confirmed=True: the FCU reported rejection but
+    # /mavros/state nonetheless shows the requested state (the "NOTE"
+    # branch in flight_command._set_arming). The wrapper must still treat
+    # this as a failure -- it must not trust the state confirmation over
+    # an explicit FCU rejection.
+    client = FakeFlightCommandClient(is_armed=False)
+    client.next_arm_result = FakeArmingResult(
+        requested=True,
+        success=False,
+        state_confirmed=True,
+        message="rejected but state confirms anyway",
+    )
+    controller = MAVROSFlightController(client)
+    with pytest.raises(ArmCommandFailed):
+        controller.arm()
+
+
+def test_disarm_raises_when_rejected_but_state_confirms_anyway():
+    # Same success=False/state_confirmed=True mismatch, for disarm().
+    client = FakeFlightCommandClient(is_armed=True)
+    client.next_disarm_result = FakeArmingResult(
+        requested=False,
+        success=False,
+        state_confirmed=True,
+        message="rejected but state confirms anyway",
+    )
+    controller = MAVROSFlightController(client)
+    with pytest.raises(ArmCommandFailed):
+        controller.disarm()
+
+
 def test_arm_precondition_rejection_propagates_unchanged():
     # FlightCommandClient.arm() can raise arming_guard.ArmRejected before
     # ever calling mavros -- that must propagate through this class
@@ -149,5 +218,29 @@ def test_velocity_raises_telemetry_unavailable():
 )
 def test_setpoint_methods_raise_not_implemented(call):
     controller = MAVROSFlightController(FakeFlightCommandClient(is_armed=True))
+    with pytest.raises(NotImplementedError):
+        call(controller)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.abort(),
+        lambda c: c.takeoff(1.0),
+        lambda c: c.land(),
+        lambda c: c.hold(),
+        lambda c: c.set_position(1.0, 0.0, 0.0),
+        lambda c: c.set_velocity(0.5, 0.0, 0.0),
+        lambda c: c.set_yaw(1.0),
+    ],
+)
+def test_setpoint_methods_raise_not_implemented_even_when_disarmed(call):
+    # These stubs must raise NotImplementedError unconditionally -- not
+    # as a side effect of an armed-state check that happens to run first.
+    # If a future edit added a `self.armed` check ahead of the
+    # `raise NotImplementedError`, calling one of these while disarmed
+    # would start raising NotArmedError instead and this real "not built
+    # yet" gap would go quiet.
+    controller = MAVROSFlightController(FakeFlightCommandClient(is_armed=False))
     with pytest.raises(NotImplementedError):
         call(controller)

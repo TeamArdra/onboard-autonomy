@@ -58,6 +58,28 @@ def test_disarm_zeroes_velocity_and_clears_target():
     assert c.velocity == (0.0, 0.0, 0.0)
 
 
+def test_disarm_mid_position_seek_clears_target_and_prevents_resume():
+    # Same contract as test_disarm_zeroes_velocity_and_clears_target, but
+    # for an in-progress set_position() target-seek rather than
+    # set_velocity() -- _clear_motion() clears _target_position too, but
+    # that was previously only exercised via the velocity_mode path.
+    c = MockFlightController()
+    c.arm()
+    c.set_position(5.0, 0.0, 0.0)
+    c.tick(0.1)
+    moved_position = c.position
+    assert moved_position != (0.0, 0.0, 0.0)
+
+    c.disarm()
+    assert c.velocity == (0.0, 0.0, 0.0)
+
+    # re-arming and ticking must not resume the old set_position target
+    c.arm()
+    c.tick(1.0)
+    assert c.position == moved_position
+    assert c.velocity == (0.0, 0.0, 0.0)
+
+
 # -- "requires armed" for every motion command ----------------------------
 
 
@@ -281,6 +303,79 @@ def test_tick_after_land_auto_disarm_is_safe_noop():
     c.tick(1.0)  # must not raise, must not move
     assert c.position == position_after_land
     assert c.velocity == (0.0, 0.0, 0.0)
+
+
+def test_land_called_twice_before_arrival_still_converges_and_disarms():
+    # land() internally calls set_position(), which resets _landing to
+    # False before land() sets it back to True -- a second land() call
+    # mid-descent must not lose the pending auto-disarm or otherwise
+    # misbehave (e.g. raise, or get stuck never reaching the ground).
+    c = MockFlightController()
+    c.arm()
+    c.takeoff(2.0)
+    for _ in range(200):
+        c.tick(0.05)
+    assert c.position == pytest.approx((0.0, 0.0, 2.0))
+
+    c.land()
+    c.tick(0.05)  # partial descent
+    c.land()  # called again mid-descent -- must not raise or misbehave
+
+    for _ in range(400):
+        c.tick(0.05)
+        if not c.armed:
+            break
+
+    assert c.position == pytest.approx((0.0, 0.0, 0.0), abs=1e-6)
+    assert c.armed is False
+
+
+def test_set_position_during_landing_cancels_pending_auto_disarm():
+    # set_position() unconditionally sets self._landing = False -- so
+    # issuing an ordinary set_position() while a land() is still
+    # descending must silently cancel the pending auto-disarm, not just
+    # override the (x, y, z) target. A caller relying on land() to
+    # eventually auto-disarm needs this made explicit.
+    c = MockFlightController()
+    c.arm()
+    c.takeoff(2.0)
+    for _ in range(200):
+        c.tick(0.05)
+
+    c.land()
+    c.tick(0.05)  # start descending, not yet arrived
+
+    c.set_position(0.0, 0.0, 1.0)  # override before touchdown
+    for _ in range(200):
+        c.tick(0.05)
+
+    assert c.position == pytest.approx((0.0, 0.0, 1.0))
+    assert c.armed is True  # must NOT have auto-disarmed
+
+
+def test_hold_during_landing_cancels_pending_auto_disarm():
+    # hold() -> _clear_motion() also clears _landing, so a hold() called
+    # mid-descent must cancel the auto-disarm-on-arrival, not just freeze
+    # position while still secretly "landing".
+    c = MockFlightController()
+    c.arm()
+    c.takeoff(2.0)
+    for _ in range(200):
+        c.tick(0.05)
+
+    c.land()
+    for _ in range(5):
+        c.tick(0.05)  # descending, not yet arrived
+
+    c.hold()
+    held_position = c.position
+    assert held_position[2] > 0.0  # confirm it was actually mid-descent
+
+    for _ in range(100):
+        c.tick(1.0)
+
+    assert c.position == held_position
+    assert c.armed is True  # must NOT have auto-disarmed
 
 
 def test_set_position_to_z_zero_does_not_auto_disarm():
