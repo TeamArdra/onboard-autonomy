@@ -324,3 +324,59 @@ def unreachable_target_room() -> IndoorEnvironment:
         (8.0, 8.0, 9.0, 9.0),  # (8,8)
     ]
     return IndoorEnvironment(obstacles=obstacles, start_pose=(1.5, 1.5))
+
+
+def simulation_maze() -> IndoorEnvironment:
+    """15x15m walled arena with interior room dividers -- the ground-truth
+    world for the NIDAR simulation harness (`mission_simulator.py`, see
+    CHECKPOINT/CURRENT_STATE.md). Unlike this module's other canned
+    scenarios (which model a fully open, implicitly-bounded rectangle),
+    this one has EXPLICIT exterior walls plus interior dividers, giving a
+    genuine multi-room/corridor layout deep enough to require several
+    distinct exploration legs and produce more than one frontier region at
+    a time -- the property the simulation needs to meaningfully exercise
+    `frontier_detector.py`/`exploration_policy.py` beyond a single trivial
+    frontier.
+
+    Layout (approximate, world meters, y increasing "north"):
+
+        14 ############### (north wall)
+        13 #    |          #
+         . # SW | corridor #   NE room, entered via the open corridor at
+         . #room|          #   the gap in the col=10 divider (rows 8-9)
+         8 #    +---+      #
+         7 #        |######
+         . # SE room|      #  SE room and the NE room split by the
+         . #        | gap  #  col=10 wall; gap at rows 3-4 connects them
+         1 #(start) |      #
+         0 ############### (south wall)
+            0              14
+
+    `start_pose = (1.5, 1.5)` (bottom-left / "SE" room, matching this
+    module's start_pose convention elsewhere)."""
+    obstacles = [
+        # Exterior walls (0..15 world, 1-cell-thick border).
+        (0.0, 0.0, 15.0, 1.0),  # south
+        (0.0, 14.0, 15.0, 15.0),  # north
+        (0.0, 0.0, 1.0, 15.0),  # west
+        (14.0, 0.0, 15.0, 15.0),  # east
+        # Vertical divider at x in [7,8): splits the arena into a west
+        # half (start side) and east half. Gap at y in [8,10) is the only
+        # corridor connection between the two halves.
+        (7.0, 1.0, 8.0, 8.0),
+        (7.0, 10.0, 8.0, 14.0),
+        # Horizontal divider at y in [7,8), west half only: splits the
+        # west half into the start ("SW") room below and a smaller room
+        # above. Gap at x in [4,6) connects them.
+        (1.0, 7.0, 4.0, 8.0),
+        (6.0, 7.0, 7.0, 8.0),
+        # Vertical divider at x in [10,11), east half: splits the east
+        # half into a south ("SE") room and a north ("NE") room. Gap at
+        # y in [3,5) connects them.
+        (10.0, 1.0, 11.0, 3.0),
+        (10.0, 5.0, 11.0, 14.0),
+        # A small interior obstacle in the NE room, so even the largest
+        # open room isn't a single trivial rectangle.
+        (11.5, 10.5, 13.0, 12.0),
+    ]
+    return IndoorEnvironment(obstacles=obstacles, start_pose=(1.5, 1.5))

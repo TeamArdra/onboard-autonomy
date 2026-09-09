@@ -38,6 +38,19 @@ criterion on each. No SLAM, no detection, no autonomous flight control.
   Unit tests: `cd nidar_autonomy && PYTHONPATH=. python3 -m pytest test/ -q`
   (after sourcing a ROS 2 Humble environment — see `../source_ros.sh`).
 
+## Simulation ("RUN SIMULATION")
+
+`nidar_autonomy/mission_simulator.py` + `simulation_node.py` — a
+deterministic, self-contained simulated mission (maze world, simulated
+LiDAR, real frontier detection/planning/mission-state code, simulated
+vehicle motion) that the GCS's **RUN SIMULATION** button drives, entirely
+isolated from the real Pixhawk/mavros path (`/simulation/`-namespaced
+topics only, no mavros_msgs/flight_command.py import anywhere in this
+feature). See `../CHECKPOINT/docs/simulation_architecture.md` for the
+full design, and `../CHECKPOINT/CURRENT_STATE.md` for the session record
+and real end-to-end test evidence. Run it directly:
+`ros2 run nidar_autonomy simulation_node`.
+
 ## What does NOT exist yet
 
 SLAM, survivor detection, exploration/path planning, and — the biggest

@@ -4,9 +4,11 @@
   <name>nidar_autonomy</name>
   <version>0.0.1</version>
   <description>
-    Onboard autonomy nodes for NIDAR AirMouse. Phase 0: command
-    handling, mission state reporting, and heartbeat only. No SLAM,
-    detection, or flight control yet -- see this repo's CLAUDE.md.
+    Onboard autonomy nodes for NIDAR AirMouse: command handling, mission
+    state, ARM/DISARM (bench-verified), and mapping/exploration/telemetry
+    (migrated from gps_denied/raj-dev -- see CHECKPOINT/CURRENT_STATE.md).
+    No autonomous flight-control setpoint issuance yet -- see this repo's
+    CLAUDE.md.
   </description>
   <maintainer email="raj.tibarewala@gmail.com">TeamArdra</maintainer>
   <license>TODO</license>
@@ -14,6 +16,11 @@
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>mavros_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>tf2_ros</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

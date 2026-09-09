@@ -26,6 +26,11 @@ setup(
             "mission_state_node = nidar_autonomy.mission_state_node:main",
             "heartbeat_node = nidar_autonomy.heartbeat_node:main",
             "checkpoint2_arm_test = nidar_autonomy.checkpoint2_arm_test:main",
+            "telemetry_bridge_node = nidar_autonomy.telemetry_bridge_node:main",
+            "coverage_tracker_node = nidar_autonomy.coverage_tracker_node:main",
+            "frontier_explorer_node = nidar_autonomy.frontier_explorer_node:main",
+            "geofence_monitor_node = nidar_autonomy.geofence_monitor_node:main",
+            "simulation_node = nidar_autonomy.simulation_node:main",
         ],
     },
 )

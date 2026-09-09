@@ -8,6 +8,7 @@ from nidar_autonomy.indoor_environment import (
     OutOfBoundsError,
     empty_room,
     room_with_single_obstacle,
+    simulation_maze,
     unreachable_target_room,
 )
 
@@ -268,3 +269,70 @@ def test_unreachable_target_room_target_not_in_flood_fill():
 def test_unreachable_target_room_direct_path_also_blocked():
     env = unreachable_target_room()
     assert env.is_path_clear(*env.start_pose, 7.5, 7.5) is False
+
+
+# -- simulation_maze() (NIDAR simulation harness ground truth) ---------------
+
+
+def test_simulation_maze_start_pose_is_valid():
+    env = simulation_maze()
+    assert env.start_pose == (1.5, 1.5)
+    assert not env.is_occupied(*env.start_pose)
+
+
+def test_simulation_maze_every_room_is_reachable_from_start():
+    """Proves the corridor gaps actually connect all four rooms -- a
+    maze where a room is sealed off would silently make the simulation's
+    exploration-completion criterion (no reachable frontiers) trigger far
+    too early, without any test catching it."""
+    env = simulation_maze()
+    reachable = _reachable_cells(env, env.start_pose)
+
+    # One representative free point inside each of the four rooms
+    # described in simulation_maze()'s docstring.
+    sw_room = (2.5, 10.5)
+    se_room = (2.5, 2.5)  # same room as start_pose
+    ne_room = (12.5, 12.5)
+    se_east_room = (12.5, 2.5)
+
+    for label, point in (("SW", sw_room), ("SE/start", se_room), ("NE", ne_room), ("east/SE", se_east_room)):
+        assert not env.is_occupied(*point), f"{label} sample point {point} should be free"
+        cell = env._cell_of(*point)  # noqa: SLF001
+        assert cell in reachable, f"{label} room at {point} is not reachable from start_pose"
+
+
+def test_simulation_maze_has_substantial_free_area():
+    """A sanity bound, not a precise figure -- catches an obstacle list
+    that accidentally walls off most of the arena."""
+    env = simulation_maze()
+    reachable = _reachable_cells(env, env.start_pose)
+    total_cells = env.width_cells * env.height_cells
+    assert len(reachable) > total_cells * 0.4
+
+
+def test_simulation_maze_produces_multiple_frontier_regions_when_partially_explored():
+    """The whole reason this scenario exists: the sim needs >1 distinct
+    frontier region available at once, not just a single corridor to
+    follow -- otherwise exploration_policy's selection logic (hysteresis,
+    sweep radius, blacklisting) is never meaningfully exercised."""
+    from nidar_autonomy.frontier_detector import detect_frontiers
+    from nidar_autonomy.sensor_model import reveal_cells
+
+    env = simulation_maze()
+    # Reveal only a modest radius around start -- enough to have crossed
+    # into the SE room but nowhere near having explored the whole maze.
+    visible = reveal_cells(env, env.start_pose, sensor_range_m=3.0)
+    data = [-1] * (env.width_cells * env.height_cells)
+    for (col, row), value in visible.items():
+        data[row * env.width_cells + col] = value
+    grid = {
+        "info": {
+            "resolution": env.resolution_m,
+            "width": env.width_cells,
+            "height": env.height_cells,
+            "origin": {"position": {"x": env.origin[0], "y": env.origin[1]}},
+        },
+        "data": data,
+    }
+    candidates = detect_frontiers(grid)
+    assert len(candidates) >= 1
