@@ -64,9 +64,25 @@ port 9090):
 | Topic | Type | Rate |
 |---|---|---|
 | `/mission/state` | `std_msgs/String` (`"idle"\|"entering"\|"searching"\|"exiting"\|"complete"\|"aborted"`) | on change |
-| `/slam/map` | `nav_msgs/OccupancyGrid`, full grid each publish, 1 m resolution | 1–5 Hz |
+| `/map` | `nav_msgs/OccupancyGrid`, full grid each publish, 1 m resolution | 1–5 Hz |
+| `/coverage_grid` | `nav_msgs/OccupancyGrid` (searched/unsearched, not walls) | ~4 Hz |
+| `/planned_path` | `nav_msgs/Path` | on replan |
+| `/telemetry/state` | custom, normalized JSON (`std_msgs/String`) | ~2 Hz |
 | `/vision/survivors` | custom `nidar_airmouse/SurvivorDetection` (this repo owns this message package — see `nidar_airmouse/`) | on detection |
 | `/gcs/heartbeat` | custom, minimal | 1 Hz |
+
+`/coverage_grid`/`/planned_path`/`/telemetry/state` were added by the
+NIDAR Autonomy Migration (folding `gps_denied/raj-dev`'s mapping/
+exploration/telemetry stack in as this repo's own code — see
+`../CHECKPOINT/CURRENT_STATE.md` §24). Nodes:
+`nidar_autonomy/coverage_tracker_node.py`,
+`nidar_autonomy/frontier_explorer_node.py`,
+`nidar_autonomy/telemetry_bridge_node.py`,
+`nidar_autonomy/geofence_monitor_node.py`. All four are read-only
+observers — none call any mavros service, none publish `/gcs/command` or
+`/mission/state`. Full contract: `../CHECKPOINT/docs/gcs_telemetry_contract.md`.
+Real publication requires real SLAM/mapping (Phase 4/5, not started —
+no LiDAR mounted, no Cartographer/Nav2 installed on this Jetson).
 
 Note: `/mavros/battery` and `/mavros/local_position/pose` are already
 published by `mavros` itself once it's running (see
@@ -134,8 +150,10 @@ active before starting flight-adjacent work — do not start checkpoint
 Pixhawk 6x  <--MAVLink/mavros-->  This repo (Jetson, ROS 2 Humble)  --rosbridge_server:9090-->  custom-gcs backend
 ```
 
-Planned subsystems, **only the first three have any code yet** (see
-"Current Project Phase"):
+Planned subsystems (see "Current Project Phase" and
+`../CHECKPOINT/AUTONOMY_ROADMAP.md` for exactly what exists vs. what's
+still planned — this list is a slower-moving summary, not the
+authoritative status):
 
 - **Command handling** (`nidar_autonomy/command_node.py`) — subscribes
   `/gcs/command`, validates it's exactly start/abort, drives the mission
