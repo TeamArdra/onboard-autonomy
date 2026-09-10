@@ -70,6 +70,8 @@ port 9090):
 | `/telemetry/state` | custom, normalized JSON (`std_msgs/String`) | ~2 Hz |
 | `/vision/survivors` | custom `nidar_airmouse/SurvivorDetection` (this repo owns this message package — see `nidar_airmouse/`) | on detection |
 | `/gcs/heartbeat` | custom, minimal | 1 Hz |
+| `/perception/detections` | custom, normalized JSON (`std_msgs/String`) | ~2 Hz (configurable) |
+| `/perception/status` | custom, normalized JSON (`std_msgs/String`) | 1 Hz |
 
 `/coverage_grid`/`/planned_path`/`/telemetry/state` were added by the
 NIDAR Autonomy Migration (folding `gps_denied/raj-dev`'s mapping/
@@ -81,6 +83,9 @@ exploration/telemetry stack in as this repo's own code — see
 `nidar_autonomy/geofence_monitor_node.py`. All four are read-only
 observers — none call any mavros service, none publish `/gcs/command` or
 `/mission/state`. Full contract: `../CHECKPOINT/docs/gcs_telemetry_contract.md`.
+`nidar_autonomy/perception/perception_node.py` (added 2026-09-10) is a
+fifth read-only observer in the same category — see "Perception
+(development)" above and `nidar_autonomy/perception/README.md`.
 Real publication requires real SLAM/mapping (Phase 4/5, not started —
 no LiDAR mounted, no Cartographer/Nav2 installed on this Jetson).
 
@@ -182,12 +187,33 @@ authoritative status):
 - **SLAM / mapping** — not started. Needs an algorithm decision (which
   SLAM stack, what sensor it consumes — camera? lidar? — hasn't been
   decided here yet) before any code exists.
-- **Survivor detection/localization** — not started. Needs a detection
-  model/pipeline decision. Note: `hawki_yolo11n.pt` and related YOLO
-  artifacts exist elsewhere on this machine (`~/hawki_yolo11n.pt`,
-  `~/cognizance2026/`) from a prior/different project — evaluate whether
-  any of that is reusable before starting from scratch, but don't assume
-  it's a fit without checking.
+- **Perception (development)** — `nidar_autonomy/perception/` (added
+  2026-09-10): a read-only observer node, `perception_node.py`, that
+  captures camera frames through a `CameraSource` abstraction (synthetic/
+  V4L2/ROS-image), runs a pluggable `PersonDetector` (a dev-only
+  Hugging-Face-sourced pretrained YOLO11n model, or a deterministic mock),
+  and publishes normalized `Detection` objects on `/perception/detections`
+  plus health on `/perception/status` (both `std_msgs/String` JSON, same
+  convention as `/telemetry/state`), and serves live video separately via
+  a stdlib MJPEG-over-HTTP server (`video_stream.py`) — never through
+  rosbridge, per `custom-gcs/docs/DECISIONS.md` D-6. Full detail, model
+  selection, and the replacement procedure for a future NIDAR-trained
+  model: `nidar_autonomy/perception/README.md`. Like the other observer
+  nodes, it never touches mavros, `mission_state_node.py`, or any
+  arming/flight-control code.
+- **Survivor detection/localization** (i.e. `/vision/survivors`,
+  `SurvivorDetection.msg`) — still **not started**. This is a distinct,
+  higher bar than the perception observer above: it means fusing a
+  detection with a real localization pose (SLAM) to produce a *confirmed*
+  world-coordinate survivor, capped at 6, and nothing publishes
+  `/vision/survivors` yet. Do not conflate "the perception observer
+  exists" with "survivor detection/localization is done" — see
+  `custom-gcs/docs/DATA_MODELS.md` §5 vs. §5A for the exact distinction.
+  Note: `hawki_yolo11n.pt` and related YOLO artifacts exist elsewhere on
+  this machine (`~/hawki_yolo11n.pt`, `~/cognizance2026/`) from a prior/
+  different project — not used by the perception observer above (their
+  provenance/class-set/license weren't verified); still worth evaluating
+  before assuming a fit, per the original note here.
 - **Exploration / path planning** — not started, depends on SLAM
   existing first.
 - **Flight command issuance** (actually sending velocity/position

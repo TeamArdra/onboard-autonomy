@@ -1,0 +1,10 @@
+# Pip-level requirements for onboard-autonomy/nidar_autonomy/perception ONLY.
+# torch, torchvision, ultralytics, and opencv-python are assumed ALREADY
+# installed as Jetson-matched CUDA builds (verified present on this
+# machine: torch 2.8.0, torchvision 0.23.0, ultralytics 8.4.15,
+# opencv-python 4.11.0). Do NOT `pip install` any of those here -- a
+# generic PyPI reinstall can silently replace the working CUDA build
+# with a broken generic one. Only huggingface_hub is a genuinely new,
+# lightweight, pure-Python addition needed to fetch/cache model weights
+# from the Hugging Face Hub.
+huggingface_hub>=0.24

@@ -31,6 +31,7 @@ setup(
             "frontier_explorer_node = nidar_autonomy.frontier_explorer_node:main",
             "geofence_monitor_node = nidar_autonomy.geofence_monitor_node:main",
             "simulation_node = nidar_autonomy.simulation_node:main",
+            "perception_node = nidar_autonomy.perception.perception_node:main",
         ],
     },
 )

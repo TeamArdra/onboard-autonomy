@@ -63,6 +63,14 @@ GEOFENCE_BREACH_TOPIC = "/mission/geofence_breach"
 # telemetry_contract.py and telemetry_bridge_node.py.
 TELEMETRY_STATE_TOPIC = "/telemetry/state"
 
+# Perception (camera capture -> pluggable person-detector -> normalized
+# Detection contract -- see nidar_autonomy/perception/). Distinct from, and
+# not a replacement for, the still-unimplemented /vision/survivors
+# (localized/confirmed-survivor contract, nidar_airmouse.SurvivorDetection) --
+# these are raw per-frame per-model detections, not localized survivors.
+PERCEPTION_DETECTIONS_TOPIC = "/perception/detections"
+PERCEPTION_STATUS_TOPIC = "/perception/status"
+
 # -- Simulation-only topics ---------------------------------------------------
 #
 # Added for the GCS "RUN SIMULATION" path (see
