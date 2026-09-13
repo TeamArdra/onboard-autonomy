@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nidar_slam</name>
+  <version>0.0.1</version>
+  <description>
+    Cartographer 2D SLAM bringup for NIDAR AirMouse. Launch/config only, no
+    nodes of its own: a static base_link-&gt;laser transform (BENCH-TEST
+    PLACEHOLDER, see launch/slam_bringup_launch.py), cartographer_ros's
+    cartographer_node (consumes /scan + /mavros/imu/data), and
+    cartographer_ros's cartographer_occupancy_grid_node (publishes /map).
+    Also provides real_autonomy_ground_test_launch.py, which additionally
+    starts the existing nidar_autonomy frontier_explorer_node (unmodified
+    algorithm, diagnostics-only logging added) for a ground test with no
+    path to MAVROS/the flight controller. Does NOT launch the physical
+    LiDAR (rplidar_ros) or mavros -- both remain separate, explicit
+    operator commands.
+  </description>
+  <maintainer email="raj.tibarewala@gmail.com">TeamArdra</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>cartographer_ros</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nidar_autonomy</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

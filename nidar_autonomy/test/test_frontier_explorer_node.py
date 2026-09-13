@@ -109,6 +109,29 @@ class TestTickPublishesAPathWhenAFrontierExists:
 
             payload = json.loads(captured["status"].data)
             assert payload["state"] == "waiting"
+            assert payload["map_available"] is False
+            assert payload["tf_available"] is False
+            assert payload["pose"] is None
+        finally:
+            cleanup()
+
+    def test_status_reports_map_tf_and_pose_once_available(self):
+        node, cleanup = _make_node()
+        try:
+            width, height = 5, 5
+            data = [0] * (width * height)
+            node.map_msg = _occupancy_grid_msg(_grid(width, height, data))
+            node.pose_xy = (2.5, 3.5)
+
+            captured = {}
+            node.status_pub.publish = lambda msg: captured.setdefault("status", msg)
+            node._publish_status()
+            import json
+
+            payload = json.loads(captured["status"].data)
+            assert payload["map_available"] is True
+            assert payload["tf_available"] is True
+            assert payload["pose"] == {"x": 2.5, "y": 3.5}
         finally:
             cleanup()
 

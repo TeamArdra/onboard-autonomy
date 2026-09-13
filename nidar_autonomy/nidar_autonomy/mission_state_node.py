@@ -83,10 +83,26 @@ state_machine.py's handle_fcu_disarmed() for the (pure, tested) logic --
 only "entering" transitions, everything else is a no-op, so this can
 never re-arm, never overrides an operator's explicit abort/state, and
 never touches the FCU itself.
+
+MISSION SELECTION GUARD (multi-mission framework): this node now also
+subscribes MISSION_SELECT_TOPIC ("/gcs/mission_select"), which carries
+routing metadata from the GCS (`{"mission_id": ..., "scenario_id": ...}`)
+telling this node which mission a subsequent "start" is meant for -- see
+topics.py's module comment. This is deliberately NOT a new command
+channel: it never triggers anything by itself, is cached passively, and
+is consulted only at the top of _on_validated_command(), only for
+"start", only to decide whether THIS node's own mission (the Main NIDAR
+Competition) should ignore a "start" meant for a different mission (e.g.
+the new mock-only Flight Test framework -- see
+nidar_autonomy/flight_test/). If no selection was ever received, or the
+selection is exactly "main_nidar", behavior is byte-for-byte identical to
+before this guard existed. "abort" is completely unaffected by mission
+selection -- it remains unconditional, per Hard Safety Rule 2.
 """
 
 from __future__ import annotations
 
+import json
 import threading
 from typing import Optional
 
@@ -99,7 +115,7 @@ from .arm_trigger import should_attempt_arm, should_attempt_disarm
 from .arming_guard import ArmRejected
 from .flight_command import STATE_TOPIC, ArmingResult, FlightCommandClient
 from .state_machine import MissionStateMachine
-from .topics import MISSION_STATE_TOPIC, VALIDATED_COMMAND_TOPIC
+from .topics import MISSION_SELECT_TOPIC, MISSION_STATE_TOPIC, VALIDATED_COMMAND_TOPIC
 
 _PUBLISH_RATE_HZ = 2.0
 
@@ -123,11 +139,44 @@ class MissionStateNode(Node):
         self._fcu_state_sub = self.create_subscription(
             State, STATE_TOPIC, self._on_fcu_state, 10
         )
+        self._latest_mission_select: Optional[dict] = None
+        self._mission_select_sub = self.create_subscription(
+            String, MISSION_SELECT_TOPIC, self._on_mission_select, 10
+        )
         self.get_logger().info(f"Starting in state: {self._machine.state!r}")
 
+    def _on_mission_select(self, msg: String) -> None:
+        try:
+            parsed = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError) as exc:
+            self.get_logger().warning(
+                f"Malformed message on {MISSION_SELECT_TOPIC}: {msg.data!r} "
+                f"({exc}). Ignoring -- keeping previous selection."
+            )
+            return
+        if not isinstance(parsed, dict):
+            self.get_logger().warning(
+                f"Malformed message on {MISSION_SELECT_TOPIC}: {msg.data!r} "
+                "did not decode to a JSON object. Ignoring -- keeping "
+                "previous selection."
+            )
+            return
+        self._latest_mission_select = parsed
+
     def _on_validated_command(self, msg: String) -> None:
-        previous = self._machine.state
         command = msg.data
+        if command == "start" and self._latest_mission_select is not None:
+            selected_mission_id = self._latest_mission_select.get("mission_id")
+            if isinstance(selected_mission_id, str) and selected_mission_id != "main_nidar":
+                self.get_logger().info(
+                    f"Rejected 'start' on {VALIDATED_COMMAND_TOPIC}: currently "
+                    f"selected mission is {selected_mission_id!r}, not "
+                    "'main_nidar' -- ignoring (this 'start' is meant for a "
+                    "different mission)."
+                )
+                return
+
+        previous = self._machine.state
         new_state = self._machine.handle_command(command)
 
         if new_state == previous and command == "start":

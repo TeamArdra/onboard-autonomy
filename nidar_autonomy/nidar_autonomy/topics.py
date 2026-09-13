@@ -91,3 +91,22 @@ SIMULATION_PLANNED_PATH_TOPIC = "/simulation/planned_path"
 SIMULATION_TELEMETRY_STATE_TOPIC = "/simulation/telemetry/state"
 
 VALID_SIMULATION_COMMANDS = ("run", "reset")
+
+# -- Multi-mission framework --------------------------------------------------
+#
+# Added for the GCS operator's choice between "Main NIDAR Competition" (the
+# existing, unchanged mission handled entirely by mission_state_node.py /
+# state_machine.py above) and "Flight Test" (a separate, mock-only scenario
+# family -- see nidar_autonomy/flight_test/). `/gcs/mission_select` carries
+# routing METADATA (`{"mission_id": str, "scenario_id": str}`), not a
+# command -- it tells listeners which mission a subsequent "start" on
+# /gcs/command is meant for, nothing more. It is deliberately a separate
+# topic from /gcs/command: VALID_COMMANDS and command_node.py's validation
+# are completely unaffected by this addition, and this topic can never by
+# itself cause a "start"/"abort" to be acted on.
+MISSION_SELECT_TOPIC = "/gcs/mission_select"
+
+# Read-only status for the mock-only Hover flight-test scenario -- see
+# nidar_autonomy/flight_test/hover_test_node.py. Same "normalized JSON blob"
+# convention as /telemetry/state and /perception/status.
+FLIGHT_TEST_STATUS_TOPIC = "/flight_test/status"

@@ -43,10 +43,19 @@ working would be worse than not having them; they are not included. This
 node's "exploration done" signal is deliberately just "no reachable frontier
 right now" -- observational telemetry, not a mission-completion decision.
 
-HARDWARE/SLAM STATUS: like coverage_tracker_node.py, this node requires a
-real `map -> base_link` TF and a real `/map` publisher, neither of which
-exists on this Jetson yet (AUTONOMY_ROADMAP.md Phase 4/5 NOT STARTED). It
-builds and imports cleanly and is ready to run once that upstream exists.
+HARDWARE/SLAM STATUS: as of the Cartographer 2D integration (RPLIDAR A2M12
+via rplidar_ros + cartographer_ros, see nidar_slam/), a real `/map`
+publisher and a real `map -> odom -> base_link` TF chain exist and have
+been bench-verified end-to-end (RViz showing a live occupancy grid,
+map/TF behaving correctly under physical LiDAR motion). This node needs no
+changes to consume them -- `tf_buffer.lookup_transform(map_frame,
+body_frame, ...)` already resolves the two-hop map->odom->base_link chain
+transparently, and the real /map's -1/0/100 OccupancyGrid convention
+already matches what frontier_detector.py/occupancy_grid_environment.py
+expect. See nidar_slam/launch/real_autonomy_ground_test_launch.py for a
+SLAM+this-node-only bringup with no mavros/mission-control path. This node
+still never touches mavros and never will -- see the module docstring
+above.
 """
 from __future__ import annotations
 
@@ -123,6 +132,7 @@ class FrontierExplorerNode(Node):
 
         self._last_frontier_count = 0
         self._last_candidate_count = 0
+        self._map_received_logged = False
 
         self.create_timer(get("replan_period_sec"), self._tick)
         self.create_timer(1.0, self._publish_status)
@@ -135,21 +145,40 @@ class FrontierExplorerNode(Node):
     # ---------------------------------------------------------------- inputs
     def _on_map(self, msg: OccupancyGrid) -> None:
         self.map_msg = msg
+        if not self._map_received_logged:
+            self._map_received_logged = True
+            self.get_logger().info(
+                f"first /map received: {msg.info.width}x{msg.info.height} cells "
+                f"@ {msg.info.resolution:.3f} m/cell, frame_id={msg.header.frame_id!r}"
+            )
 
     def _read_pose(self) -> None:
         try:
             tf = self.tf_buffer.lookup_transform(self.map_frame, self.body_frame, Time())
-        except TransformException:
+        except TransformException as exc:
+            self.get_logger().warning(
+                f"{self.map_frame}->{self.body_frame} TF not available yet: {exc}",
+                throttle_duration_sec=5.0,
+            )
             return
         x = tf.transform.translation.x
         y = tf.transform.translation.y
         self.pose_xy = (x, y)
         record_visit(self.visited, x, y, self.visit_cell_size)
+        self.get_logger().info(
+            f"pose in {self.map_frame} frame: ({x:.2f}, {y:.2f})",
+            throttle_duration_sec=2.0,
+        )
 
     # ------------------------------------------------------------- main loop
     def _tick(self) -> None:
         self._read_pose()
         if self.map_msg is None or self.pose_xy is None:
+            self.get_logger().info(
+                f"waiting for prerequisites: map_available={self.map_msg is not None}, "
+                f"tf_available={self.pose_xy is not None}",
+                throttle_duration_sec=5.0,
+            )
             return
 
         grid_dict = occupancy_grid_msg_to_dict(self.map_msg)
@@ -161,6 +190,10 @@ class FrontierExplorerNode(Node):
         candidates = [c for c in candidates if c.cell_count >= self.min_frontier_cells]
         self._last_frontier_count = len(candidates)
         self._publish_markers(candidates)
+        self.get_logger().info(
+            f"frontier detection: {self._last_frontier_count} frontier region(s) found",
+            throttle_duration_sec=2.0,
+        )
 
         scored = score_candidates(
             candidates,
@@ -179,10 +212,16 @@ class FrontierExplorerNode(Node):
         self._last_candidate_count = len(scored)
         if not scored:
             self.goal = None
+            self.get_logger().info(
+                "no viable exploration candidate this tick", throttle_duration_sec=5.0
+            )
             return
         target = apply_sweep_radius(scored, self.sweep_radius)[0]
 
         self.goal = (target.x, target.y)
+        self.get_logger().info(
+            f"selected frontier target: ({target.x:.2f}, {target.y:.2f}) cost={target.cost:.2f}"
+        )
         try:
             env = OccupancyGridEnvironment(grid_dict)
             waypoints = self.planner.plan(self.pose_xy, self.goal, env)
@@ -194,6 +233,10 @@ class FrontierExplorerNode(Node):
             self.goal = None
             return
 
+        self.get_logger().info(
+            f"A* planned path to ({self.goal[0]:.2f}, {self.goal[1]:.2f}): "
+            f"{len(waypoints)} waypoint(s)"
+        )
         self._publish_path(waypoints)
 
     # ------------------------------------------------------------ publishing
@@ -240,6 +283,13 @@ class FrontierExplorerNode(Node):
         msg.data = json.dumps(
             {
                 "state": state,
+                "map_available": self.map_msg is not None,
+                "tf_available": self.pose_xy is not None,
+                "pose": (
+                    {"x": self.pose_xy[0], "y": self.pose_xy[1]}
+                    if self.pose_xy is not None
+                    else None
+                ),
                 "target": list(self.goal) if self.goal is not None else None,
                 "frontier_count": self._last_frontier_count,
                 "candidate_count": self._last_candidate_count,
