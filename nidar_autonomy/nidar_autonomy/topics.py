@@ -110,3 +110,16 @@ MISSION_SELECT_TOPIC = "/gcs/mission_select"
 # nidar_autonomy/flight_test/hover_test_node.py. Same "normalized JSON blob"
 # convention as /telemetry/state and /perception/status.
 FLIGHT_TEST_STATUS_TOPIC = "/flight_test/status"
+
+# Read-only status for the mock-only, multi-step Flight Test scenarios
+# (Test 1, Test 2, ... -- see nidar_autonomy/flight_test/scenarios.py and
+# multi_step_test_node.py). Deliberately a SEPARATE topic from
+# FLIGHT_TEST_STATUS_TOPIC above, not a shared one: hover_test_node.py
+# publishes its own status unconditionally every second regardless of
+# whether it's the active scenario, and so does multi_step_test_node.py --
+# sharing one topic would mean two always-publishing nodes overwrite each
+# other's status in the GCS's single-latest-message cache, showing
+# whichever node's message happened to arrive most recently rather than
+# the actually-active one. Keeping them on separate topics lets the GCS
+# poll the one matching whichever scenario_id it most recently started.
+MULTI_STEP_TEST_STATUS_TOPIC = "/flight_test/multi_step/status"

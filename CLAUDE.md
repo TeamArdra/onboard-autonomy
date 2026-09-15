@@ -72,6 +72,8 @@ port 9090):
 | `/gcs/heartbeat` | custom, minimal | 1 Hz |
 | `/perception/detections` | custom, normalized JSON (`std_msgs/String`) | ~2 Hz (configurable) |
 | `/perception/status` | custom, normalized JSON (`std_msgs/String`) | 1 Hz |
+| `/flight_test/status` | custom, normalized JSON (`std_msgs/String`) | 1 Hz |
+| `/flight_test/multi_step/status` | custom, normalized JSON (`std_msgs/String`) | 1 Hz |
 
 `/coverage_grid`/`/planned_path`/`/telemetry/state` were added by the
 NIDAR Autonomy Migration (folding `gps_denied/raj-dev`'s mapping/
@@ -89,6 +91,24 @@ fifth read-only observer in the same category — see "Perception
 Real publication requires real SLAM/mapping (Phase 4/5, not started —
 no LiDAR mounted, no Cartographer/Nav2 installed on this Jetson).
 
+**Mission/Test Selection and Execution System (added 2026-09-15):**
+`nidar_autonomy/flight_test/` — `hover_test_node.py` and
+`multi_step_test_node.py`, publishing `/flight_test/status` and
+`/flight_test/multi_step/status` respectively. Both are MOCK-ONLY, by
+construction: neither ever imports `mavros_msgs` or constructs a
+`MAVROSFlightController` — see each node's own module docstring and
+`flight_test/__init__.py`. Both subscribe `/gcs/mission_select` (routing
+metadata, see below) and `VALIDATED_COMMAND_TOPIC`, and only ever act on
+a `"start"` whose accompanying selection names a `scenario_id` they
+recognize (`hover` for the former; `forward_backward_hover` /
+`sideways_hover_sideways_hover` for the latter, registry:
+`flight_test/scenarios.py`). `command_node.py`/`mission_state_node.py`
+are completely unmodified by this addition — see the "Subscribe" table's
+`/gcs/mission_select` row for why this is additive, not a new command
+channel. Ground-test bringup: `ros2 launch nidar_autonomy
+flight_test_launch.py` (starts `command_node` + both Flight Test nodes,
+nothing mavros-adjacent).
+
 Note: `/mavros/battery` and `/mavros/local_position/pose` are already
 published by `mavros` itself once it's running (see
 `../NIDAR-Hardware-Bringup/`) — this repo does not need to republish
@@ -103,6 +123,7 @@ something to work around on the GCS side.
 | Topic | Type | Values |
 |---|---|---|
 | `/gcs/command` | `std_msgs/String` | exactly `"start"` or `"abort"` — nothing else is a valid operator action, ever |
+| `/gcs/mission_select` | custom JSON (`std_msgs/String`) | `{"mission_id", "scenario_id", ...}` — routing metadata only, consulted solely by `mission_state_node.py`/`flight_test/*` at the moment a `"start"` is validated. **Not a new operator command**: publishing this alone can never cause anything to happen, and Hard Safety Rule 5 still applies unchanged to `/gcs/command` itself. See `custom-gcs/docs/COMMUNICATION.md` §2.6. |
 
 ## Integration Checkpoints (read before any flight/arming/MAVLink work)
 
@@ -184,6 +205,20 @@ authoritative status):
   `/gcs/heartbeat` at 1 Hz. Deliberately the simplest node in the repo —
   per `DATA_MODELS.md` §6, this should be the first thing proven working
   end-to-end against the real GCS, before anything else.
+- **Flight Test / Mission Selection** (`nidar_autonomy/flight_test/`,
+  added 2026-09-15) — `hover_test_node.py` and `multi_step_test_node.py`,
+  an ordered-step scenario registry (`scenarios.py`) plus a generic
+  step-executor node, both MOCK-ONLY by construction (never import
+  `mavros_msgs`, only ever drive `MockFlightController` — see each node's
+  docstring). Selectable from the GCS's (dev/bench-only,
+  `VITE_ENABLE_MISSION_SELECT`-gated) Mission/Test Selector via
+  `/gcs/mission_select`; completely inert with respect to
+  `mission_state_node.py`/the real ARM/DISARM path — see the "Subscribe"
+  table above. Launch: `ros2 launch nidar_autonomy flight_test_launch.py`.
+  Adding a future scenario (a "Test 3", etc.) is a registry addition to
+  `scenarios.py` (+ the hand-synced mirror in
+  `custom-gcs/gcs/backend/app/missions.py`), not a new node, unless it
+  needs an action `multi_step_test_node.py` doesn't already implement.
 - **SLAM / mapping** — not started. Needs an algorithm decision (which
   SLAM stack, what sensor it consumes — camera? lidar? — hasn't been
   decided here yet) before any code exists.

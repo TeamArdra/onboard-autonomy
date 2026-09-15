@@ -1,3 +1,5 @@
+import glob
+
 from setuptools import find_packages, setup
 
 package_name = "nidar_autonomy"
@@ -9,6 +11,7 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
+        ("share/" + package_name + "/launch", glob.glob("launch/*.py")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -32,6 +35,8 @@ setup(
             "geofence_monitor_node = nidar_autonomy.geofence_monitor_node:main",
             "simulation_node = nidar_autonomy.simulation_node:main",
             "perception_node = nidar_autonomy.perception.perception_node:main",
+            "hover_test_node = nidar_autonomy.flight_test.hover_test_node:main",
+            "multi_step_test_node = nidar_autonomy.flight_test.multi_step_test_node:main",
         ],
     },
 )
