@@ -26,6 +26,7 @@ environment.
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 
@@ -49,6 +50,22 @@ class InvalidCommandError(FlightCommandError):
     NotArmedError so a caller/test can tell "this command is malformed
     or out of bounds" from "the vehicle isn't ready for any command at
     all"."""
+
+
+def validate_finite(**named_values: Optional[float]) -> None:
+    """Raise `InvalidCommandError` if any given value is NaN/Inf. `None`
+    values are skipped (an omitted optional argument, e.g. `yaw`, is not
+    a validation failure). Shared by every `FlightCommandInterface`
+    implementation's command methods (`MockFlightController`,
+    `MAVROSFlightController`) so the same rejection behavior for garbage
+    input is guaranteed identical across both -- previously duplicated
+    per-implementation, which risked exactly the kind of behavioral drift
+    this interface exists to prevent (see this module's own docstring)."""
+    for name, value in named_values.items():
+        if value is None:
+            continue
+        if math.isnan(value) or math.isinf(value):
+            raise InvalidCommandError(f"{name}={value!r} is not a finite number")
 
 
 class FlightCommandInterface(ABC):

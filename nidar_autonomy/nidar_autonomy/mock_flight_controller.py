@@ -21,6 +21,7 @@ from .flight_command_interface import (
     FlightCommandInterface,
     InvalidCommandError,
     NotArmedError,
+    validate_finite,
 )
 
 # Arena is <=15m x 15m indoor (custom-gcs/docs/REQUIREMENTS.md) -- 2.0
@@ -41,14 +42,6 @@ _DEFAULT_POSITION_TOLERANCE_M = 0.02
 # value that is legitimately *at* the bound (e.g. requesting exactly
 # max_speed_mps) is not rejected purely from floating-point noise.
 _BOUND_EPSILON = 1e-9
-
-
-def _validate_finite(**named_values: Optional[float]) -> None:
-    for name, value in named_values.items():
-        if value is None:
-            continue
-        if math.isnan(value) or math.isinf(value):
-            raise InvalidCommandError(f"{name}={value!r} is not a finite number")
 
 
 class MockFlightController(FlightCommandInterface):
@@ -132,7 +125,7 @@ class MockFlightController(FlightCommandInterface):
 
     def takeoff(self, height: float) -> None:
         self._require_armed()
-        _validate_finite(height=height)
+        validate_finite(height=height)
         if height <= 0 or height > self._max_altitude_m + _BOUND_EPSILON:
             raise InvalidCommandError(
                 f"takeoff height {height}m must be in (0, "
@@ -155,7 +148,7 @@ class MockFlightController(FlightCommandInterface):
         self, x: float, y: float, z: float, yaw: Optional[float] = None
     ) -> None:
         self._require_armed()
-        _validate_finite(x=x, y=y, z=z, yaw=yaw)
+        validate_finite(x=x, y=y, z=z, yaw=yaw)
         self._target_position = (x, y, z)
         self._target_yaw = yaw
         self._velocity_mode = False
@@ -169,7 +162,7 @@ class MockFlightController(FlightCommandInterface):
         yaw_rate: Optional[float] = None,
     ) -> None:
         self._require_armed()
-        _validate_finite(vx=vx, vy=vy, vz=vz, yaw_rate=yaw_rate)
+        validate_finite(vx=vx, vy=vy, vz=vz, yaw_rate=yaw_rate)
         speed = math.sqrt(vx * vx + vy * vy + vz * vz)
         if speed > self._max_speed_mps + _BOUND_EPSILON:
             raise InvalidCommandError(
@@ -184,7 +177,7 @@ class MockFlightController(FlightCommandInterface):
 
     def set_yaw(self, yaw: float) -> None:
         self._require_armed()
-        _validate_finite(yaw=yaw)
+        validate_finite(yaw=yaw)
         self._yaw = yaw
 
     def abort(self) -> None:
@@ -202,7 +195,7 @@ class MockFlightController(FlightCommandInterface):
         """Advance the simulated vehicle by `dt` seconds. Must be called
         explicitly and repeatedly to make any motion happen -- there is
         no background clock."""
-        _validate_finite(dt=dt)
+        validate_finite(dt=dt)
         if dt <= 0:
             raise InvalidCommandError(f"dt={dt!r} must be positive")
         if not self._armed:

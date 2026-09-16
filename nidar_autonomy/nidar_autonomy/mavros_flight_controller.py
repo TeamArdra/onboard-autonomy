@@ -1,69 +1,53 @@
-"""`FlightCommandInterface` implementation backed by mavros, via the
-existing, already-reviewed `flight_command.FlightCommandClient`.
+"""`FlightCommandInterface` implementation backed by mavros -- arming via
+the existing, already-reviewed `flight_command.FlightCommandClient`,
+motion via `setpoint_client.SetpointClient` (see that module's docstring
+for the full control-mode/failsafe/abort design).
 
-CHECKPOINT/AUTONOMY_ROADMAP.md Phase 1 -- this class is **deliberately,
-severely limited**:
+This class only orchestrates between the two -- it owns no mavros
+subscriptions/publishers/services itself, matching the existing pattern
+where `mission_state_node.py`/`test_mission_node.py` own construction of
+both clients and inject them here. `arm()`/`disarm()` still delegate
+purely to `FlightCommandClient`, unchanged from before this file
+implemented real setpoints -- this remains the ONLY code in the repo
+permitted to call mavros's arming service (Hard Safety Rule 1), reached
+either directly (`arm`/`disarm`) or indirectly (`abort()`'s
+`on_ground_after_abort` callback, once `SetpointClient`'s own abort
+sequence reports it is safe to do so -- see that module's docstring).
 
-- `arm()` / `disarm()` do nothing new. They delegate to
-  `FlightCommandClient`, the only code in this repo permitted to call
-  mavros's arming service (see this repo's CLAUDE.md Hard Safety Rule 1
-  and `flight_command.py`'s own module docstring). This is wrapping
-  already-approved code behind the shared interface, not adding
-  capability.
-- `abort()`, `takeoff`, `land`, `hold`, `set_position`, `set_velocity`,
-  `set_yaw` all raise `NotImplementedError`. Real setpoint issuance
-  (velocity/position commands that would actually make the vehicle fly)
-  requires a dedicated, explicit safety-reviewed design pass -- control
-  mode, failsafe behavior, geofence, abort-preemption mechanism -- per
-  `CHECKPOINT/NEXT.md` Phase 8 and
-  `CHECKPOINT/INTEGRATION_CHECKPOINTS.md` Checkpoint 5 onward. `abort()`
-  specifically is unimplemented because what in-flight ABORT means is
-  Checkpoint 7's own required design pass -- see that method's
-  docstring -- not because setpoint issuance is involved. **No mavros
-  setpoint-publishing code exists in this file at all, not even
-  unreachable/never-called code** -- writing it is out of scope for this
-  task regardless of how the interface is structured.
-
-This module does not import `flight_command.py` at runtime (only under
-`typing.TYPE_CHECKING`, made possible by `from __future__ import
-annotations`) so that it -- and `MAVROSFlightController` itself -- stay
-importable and unit-testable (with a stub in place of the real client)
-without a ROS environment/rclpy/mavros_msgs available, same as every
-other non-ROS module in this package. The constructor takes an
-already-constructed client (dependency injection) -- this class never
-creates its own mavros connection or Node, matching the existing
-pattern where `mission_state_node.py` owns that construction.
+This module does not import `flight_command.py`/`setpoint_client.py` at
+runtime (only under `typing.TYPE_CHECKING`), so it stays importable and
+unit-testable (with stubs in place of the real clients) without a ROS
+environment available -- same posture as every other non-ROS-required
+module in this package. In practice, though, this specific class has no
+dedicated unit tests in this repo (see `setpoint_client.py`'s docstring
+for why): it is thin orchestration over two already-tested/reviewed
+pieces (`FlightCommandClient`'s arming logic, `SetpointClient`'s
+publish/abort logic), and the actual proof this works is the bench/SITL
+validation this repo's Hard Safety Rule 3 requires before real flight,
+not a unit test against a ROS environment this sandbox doesn't have.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Tuple
 
-from .flight_command_interface import FlightCommandError, FlightCommandInterface
+from .flight_command_interface import (
+    FlightCommandError,
+    FlightCommandInterface,
+    InvalidCommandError,
+    NotArmedError,
+    validate_finite,
+)
 
 if TYPE_CHECKING:
     from .flight_command import ArmingResult, FlightCommandClient
+    from .setpoint_client import SetpointClient
 
-_SETPOINT_NOT_IMPLEMENTED = (
-    "{method}() is not implemented in MAVROSFlightController: real "
-    "setpoint issuance requires a dedicated safety-reviewed design pass "
-    "(control mode, failsafe behavior, geofence, abort-preemption) per "
-    "CHECKPOINT/NEXT.md Phase 8 and "
-    "CHECKPOINT/INTEGRATION_CHECKPOINTS.md Checkpoint 5 onward -- not "
-    "implemented here, and not to be implemented without that separate, "
-    "explicit sign-off."
-)
-
-_ABORT_NOT_IMPLEMENTED = (
-    "abort() is not implemented in MAVROSFlightController: "
-    "INTEGRATION_CHECKPOINTS.md Checkpoint 7 requires in-flight ABORT to "
-    "NOT simply mean 'immediately disarm' -- the safe airborne response "
-    "(hold, controlled descent, RTL-equivalent, etc.) must be designed "
-    "and reviewed with the user before any implementation, per that "
-    "checkpoint's own text and this repo's CLAUDE.md Hard Safety Rule 2. "
-    "Not implemented here, and not to be implemented without that "
-    "separate, explicit design pass and sign-off."
-)
+# Same defaults as MockFlightController, for the same reasons documented
+# there (arena is <=15m x 15m indoor; 3m is a sane bench/arena ceiling).
+_DEFAULT_MAX_SPEED_MPS = 2.0
+_DEFAULT_MAX_ALTITUDE_M = 3.0
+_BOUND_EPSILON = 1e-9
 
 
 class ArmCommandFailed(FlightCommandError):
@@ -78,21 +62,31 @@ class ArmCommandFailed(FlightCommandError):
 
 
 class TelemetryUnavailableError(FlightCommandError):
-    """Raised by a read-only state property when the underlying client
-    cannot answer with confidence -- either because no telemetry has
-    been received yet (`armed`, transiently, before the first
-    `/mavros/state` message) or because the telemetry does not exist at
-    all yet (`position`/`velocity` -- `flight_command.py` only exposes
-    `/mavros/state.armed` today; indoor pose depends on the SLAM ->
-    `VISION_POSITION_ESTIMATE` pipeline tracked as open in
-    `custom-gcs/docs/DECISIONS.md` D-11). This is a real, documented gap,
-    not a stub -- callers must handle it rather than receiving a
-    fabricated zero/placeholder value."""
+    """Raised by a read-only state property, or a command that needs a
+    current position internally (e.g. `takeoff`, `hold`), when the
+    underlying `SetpointClient` cannot answer with confidence -- no
+    `/mavros/local_position/pose` message has been received yet. This is
+    a real, momentary startup gap (or a genuine telemetry loss), not a
+    stub -- callers must handle it rather than receiving a fabricated
+    zero/placeholder value, same rule this class already applied to
+    `armed` before any setpoint code existed here."""
 
 
 class MAVROSFlightController(FlightCommandInterface):
-    def __init__(self, client: "FlightCommandClient") -> None:
+    def __init__(
+        self,
+        client: "FlightCommandClient",
+        setpoints: "SetpointClient",
+        *,
+        max_speed_mps: float = _DEFAULT_MAX_SPEED_MPS,
+        max_altitude_m: float = _DEFAULT_MAX_ALTITUDE_M,
+    ) -> None:
+        if max_speed_mps <= 0 or max_altitude_m <= 0:
+            raise InvalidCommandError("max_speed_mps and max_altitude_m must both be positive")
         self._client = client
+        self._setpoints = setpoints
+        self._max_speed_mps = max_speed_mps
+        self._max_altitude_m = max_altitude_m
 
     # -- FlightCommandInterface: read-only state -----------------------
 
@@ -108,20 +102,16 @@ class MAVROSFlightController(FlightCommandInterface):
 
     @property
     def position(self) -> Tuple[float, float, float]:
-        raise TelemetryUnavailableError(
-            "position telemetry is not available: FlightCommandClient "
-            "does not expose pose today -- see this class's docstring."
-        )
+        return self._setpoints.position
 
     @property
     def velocity(self) -> Tuple[float, float, float]:
-        raise TelemetryUnavailableError(
-            "velocity telemetry is not available: FlightCommandClient "
-            "does not expose velocity today -- see this class's "
-            "docstring."
-        )
+        # setpoint_client.py raises this exact TelemetryUnavailableError
+        # type directly (imported from this module) -- nothing to
+        # catch/rewrap here.
+        return self._setpoints.velocity
 
-    # -- FlightCommandInterface: commands wrapping FlightCommandClient --
+    # -- FlightCommandInterface: arming, unchanged from before real setpoints --
 
     def arm(self) -> None:
         self._raise_if_not_confirmed(self._client.arm())
@@ -129,36 +119,59 @@ class MAVROSFlightController(FlightCommandInterface):
     def disarm(self) -> None:
         self._raise_if_not_confirmed(self._client.disarm())
 
-    def abort(self) -> None:
-        """Deliberately unimplemented -- see `INTEGRATION_CHECKPOINTS.md`
-        Checkpoint 7: what in-flight ABORT actually means (ground-only
-        disarm vs. an airborne-safe response) is Checkpoint 7's own
-        required design pass, not something to pre-empt here by assuming
-        "abort == disarm" is correct for every case this method might
-        eventually need to cover."""
-        raise NotImplementedError(_ABORT_NOT_IMPLEMENTED)
-
     def _raise_if_not_confirmed(self, result: "ArmingResult") -> None:
         if not (result.success and result.state_confirmed):
             raise ArmCommandFailed(result.message)
 
-    # -- FlightCommandInterface: setpoint issuance -- OUT OF SCOPE ------
+    # -- FlightCommandInterface: motion ------------------------------------
+
+    def abort(self) -> None:
+        """Cancel whatever setpoint is active and preempt with the
+        hold -> controlled-descent -> ready-to-disarm sequence
+        `setpoint_client.py`/`abort_sequence.py` implement (see their
+        docstrings and `INTEGRATION_CHECKPOINTS.md` Checkpoint 7). This
+        call itself only flags the request and returns immediately --
+        the interface's "must not require a further tick() call to take
+        effect" requirement refers to PREEMPTION being immediate (any
+        prior command is abandoned as of this call), not that a physical
+        landing can complete synchronously; it plays out over the
+        `SetpointClient`'s own publish timer. Callable regardless of
+        current armed state, per the interface contract."""
+        self._setpoints.request_abort()
 
     def takeoff(self, height: float) -> None:
-        raise NotImplementedError(_SETPOINT_NOT_IMPLEMENTED.format(method="takeoff"))
+        self._require_armed()
+        validate_finite(height=height)
+        if height <= 0 or height > self._max_altitude_m + _BOUND_EPSILON:
+            raise InvalidCommandError(
+                f"takeoff height {height}m must be in (0, {self._max_altitude_m}]m"
+            )
+        x, y, _z = self._setpoints.position
+        self._setpoints.set_position_target(x, y, height)
 
     def land(self) -> None:
-        raise NotImplementedError(_SETPOINT_NOT_IMPLEMENTED.format(method="land"))
+        """Command a descent to the ground at the current (x, y).
+        Deliberately does NOT itself disarm on reaching z~=0 -- a
+        setpoint merely arriving at 0 is not proof of an actual
+        touchdown. Real touchdown/disarm is handled by PX4's own landing
+        detector + ground-idle auto-disarm, which
+        `state_machine.handle_fcu_disarmed()` already watches for -- same
+        reasoning this class already applied to `abort()`'s DISARM step,
+        which instead waits for a real height reading near the ground."""
+        self._require_armed()
+        x, y, _z = self._setpoints.position
+        self._setpoints.set_position_target(x, y, 0.0)
 
     def hold(self) -> None:
-        raise NotImplementedError(_SETPOINT_NOT_IMPLEMENTED.format(method="hold"))
+        self._require_armed()
+        self._setpoints.hold()  # raises TelemetryUnavailableError itself if position unknown
 
     def set_position(
         self, x: float, y: float, z: float, yaw: Optional[float] = None
     ) -> None:
-        raise NotImplementedError(
-            _SETPOINT_NOT_IMPLEMENTED.format(method="set_position")
-        )
+        self._require_armed()
+        validate_finite(x=x, y=y, z=z, yaw=yaw)
+        self._setpoints.set_position_target(x, y, z, yaw)
 
     def set_velocity(
         self,
@@ -167,9 +180,27 @@ class MAVROSFlightController(FlightCommandInterface):
         vz: float,
         yaw_rate: Optional[float] = None,
     ) -> None:
-        raise NotImplementedError(
-            _SETPOINT_NOT_IMPLEMENTED.format(method="set_velocity")
-        )
+        self._require_armed()
+        validate_finite(vx=vx, vy=vy, vz=vz, yaw_rate=yaw_rate)
+        speed = (vx * vx + vy * vy + vz * vz) ** 0.5
+        if speed > self._max_speed_mps + _BOUND_EPSILON:
+            raise InvalidCommandError(
+                f"requested speed {speed:.3f} m/s exceeds max_speed_mps="
+                f"{self._max_speed_mps} -- rejected, not clamped"
+            )
+        self._setpoints.set_velocity_target(vx, vy, vz, yaw_rate)
 
     def set_yaw(self, yaw: float) -> None:
-        raise NotImplementedError(_SETPOINT_NOT_IMPLEMENTED.format(method="set_yaw"))
+        self._require_armed()
+        validate_finite(yaw=yaw)
+        self._setpoints.set_yaw(yaw)  # raises TelemetryUnavailableError itself if position unknown
+
+    # -- internal -----------------------------------------------------------
+
+    def _require_armed(self) -> None:
+        # Reuses this class's own `armed` property (which already raises
+        # TelemetryUnavailableError on unknown state) rather than
+        # duplicating that check -- an unknown armed state must refuse a
+        # motion command exactly as confidently as a known-disarmed one.
+        if not self.armed:
+            raise NotArmedError("Cannot issue a motion command: vehicle is not armed.")

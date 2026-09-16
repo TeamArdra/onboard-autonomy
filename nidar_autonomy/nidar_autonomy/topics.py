@@ -83,3 +83,24 @@ SIMULATION_PLANNED_PATH_TOPIC = "/simulation/planned_path"
 SIMULATION_TELEMETRY_STATE_TOPIC = "/simulation/telemetry/state"
 
 VALID_SIMULATION_COMMANDS = ("run", "reset")
+
+# -- Test-mission topics -----------------------------------------------------
+#
+# A dev-only, real-flight test mission (hover / find-open-space / move /
+# stop, repeating) -- see nidar_autonomy/test_mission_node.py and
+# custom-gcs's "Test Mission" panel. UNLIKE the /simulation/ namespace
+# above, this DOES command the real Pixhawk (via a real
+# MAVROSFlightController) -- it is a separate real-flight command surface
+# from /gcs/command, not a simulation. Kept on its own namespace so it can
+# never collide with /gcs/command's real mission vocabulary
+# ("start"/"abort") or be confused with /simulation/command's fully-inert
+# vocabulary ("run"/"reset") -- see topics.py's own naming convention.
+TEST_MISSION_COMMAND_TOPIC = "/test_mission/command"
+TEST_MISSION_STATUS_TOPIC = "/test_mission/status"
+
+VALID_TEST_MISSION_COMMANDS = ("start", "stop")
+
+# Real position source for this stage: PX4's own EKF2 output (fed by the
+# MTF-01 optical flow + rangefinder), NOT the SLAM-fed VISION_POSE_TOPIC
+# above (no real SLAM exists yet -- see mavros_flight_controller.py).
+LOCAL_POSITION_TOPIC = "/mavros/local_position/pose"

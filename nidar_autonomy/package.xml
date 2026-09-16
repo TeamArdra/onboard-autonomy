@@ -7,8 +7,12 @@
     Onboard autonomy nodes for NIDAR AirMouse: command handling, mission
     state, ARM/DISARM (bench-verified), and mapping/exploration/telemetry
     (migrated from gps_denied/raj-dev -- see CHECKPOINT/CURRENT_STATE.md).
-    No autonomous flight-control setpoint issuance yet -- see this repo's
-    CLAUDE.md.
+    Real flight-control setpoint issuance now exists ONLY for the
+    dev-only /test_mission/* path (test_mission_node.py, gated behind
+    explicit safety-reviewed design -- see mavros_flight_controller.py
+    and setpoint_client.py); the real competition mission
+    (mission_state_node.py) still never sends a setpoint -- see this
+    repo's CLAUDE.md.
   </description>
   <maintainer email="raj.tibarewala@gmail.com">TeamArdra</maintainer>
   <license>TODO</license>
@@ -21,6 +25,8 @@
   <depend>nav_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>tf2_ros</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

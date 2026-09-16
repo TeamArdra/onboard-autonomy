@@ -35,6 +35,17 @@ from .topics import GEOFENCE_BREACH_TOPIC, VISION_POSE_TOPIC
 class GeofenceMonitorNode(Node):
     def __init__(self) -> None:
         super().__init__("geofence_monitor")
+        # Pose source is a parameter, not hardcoded: VISION_POSE_TOPIC
+        # (default) is the future SLAM-fed pose this node was originally
+        # built for (AUTONOMY_ROADMAP.md Phase 4/5, not built yet). The
+        # "First Real Test-Flight Mission" plan's test-mission stage has
+        # no SLAM -- it overrides this to /mavros/local_position/pose
+        # (PX4's own EKF2 output, fed by the MTF-01) via a launch param,
+        # so this same, already-reviewed node serves both stages without
+        # a fork.
+        self.declare_parameter("pose_topic", VISION_POSE_TOPIC)
+        pose_topic = self.get_parameter("pose_topic").value
+
         # Arena rectangle in the map frame. Defaults are a placeholder --
         # must be set to the real arena bounds (per-venue) via ROS params
         # before this node's output is trusted; see docs/gcs_telemetry_contract.md
@@ -62,11 +73,12 @@ class GeofenceMonitorNode(Node):
 
         self.breached = False
 
-        self.create_subscription(PoseStamped, VISION_POSE_TOPIC, self._on_pose, 10)
+        self.create_subscription(PoseStamped, pose_topic, self._on_pose, 10)
         self.pub = self.create_publisher(Bool, GEOFENCE_BREACH_TOPIC, 10)
 
         self.get_logger().info(
-            f"geofence_monitor: arena rect x[{self.min_x:.1f},{self.max_x:.1f}] "
+            f"geofence_monitor: watching {pose_topic}, arena rect "
+            f"x[{self.min_x:.1f},{self.max_x:.1f}] "
             f"y[{self.min_y:.1f},{self.max_y:.1f}] (incl. margin), "
             f"0-{self.max_height}m height"
         )
