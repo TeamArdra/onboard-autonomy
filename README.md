@@ -73,3 +73,19 @@ see `CLAUDE.md`'s Hard Safety Rules.
   moved under `~/NIDAR/`. Superseded by `../CHECKPOINT/` for anything
   it overlaps with, but the original bring-up notes are still there if
   needed. Not a subdirectory of this repo — it lives at `~/NIDAR-Hardware-Bringup`, not `../NIDAR-Hardware-Bringup`.
+
+## Telemetry-radio START/ABORT
+
+`telem_command_bridge_node` lets the laptop start (or abort) the mission
+over the MicroLR900 telemetry radio instead of Wi-Fi. It only republishes
+`"start"`/`"abort"` onto `/gcs/command`, so the normal command_node →
+mission_state_node path does the rest. Run it alongside mavros:
+
+```bash
+ros2 run nidar_autonomy telem_command_bridge_node \
+  --ros-args -p own_component_id:=240   # must equal mavros' component_id
+```
+
+Check mavros' ids with `ros2 param get /mavros system_id` and
+`ros2 param get /mavros component_id`. Laptop side and wire format:
+`../custom-gcs/tools/README.md`, `../custom-gcs/docs/COMMUNICATION.md` §6.
