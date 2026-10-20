@@ -73,3 +73,26 @@ see `CLAUDE.md`'s Hard Safety Rules.
   moved under `~/NIDAR/`. Superseded by `../CHECKPOINT/` for anything
   it overlaps with, but the original bring-up notes are still there if
   needed. Not a subdirectory of this repo — it lives at `~/NIDAR-Hardware-Bringup`, not `../NIDAR-Hardware-Bringup`.
+
+## Radio START/ABORT and the real hover (ArduCopter)
+
+The MicroLR900 command radio is plugged into the **Jetson** (USB serial);
+the Pixhawk is not on the radio link.
+
+- `radio_command_node` -- opens the radio (`serial_port`, default the
+  CP2102 `/dev/serial/by-id/...` path, fallback `/dev/ttyUSB0`, 115200),
+  decodes `COMMAND_LONG(MAV_CMD_USER_1)` (`telem_command_codec.py`),
+  accepts/rejects it (`radio_command_logic.py`), publishes
+  `/gcs/mission_select` + `/gcs/command`, replies `COMMAND_ACK` with a
+  reason code, and sends a 1 Hz radio heartbeat. `-p dry_run:=true` ACKs
+  and logs without publishing anything (radio bench test).
+- `ardupilot_vehicle.py` -- ArduCopter control through MAVROS for GUIDED
+  missions: mode changes, takeoff, stream-rate requests, state snapshot;
+  arm/disarm delegated to the existing `FlightCommandClient`.
+- The hover mission itself lives outside this repo, in
+  `NidarFiles/missions/hover/` (`mission.py`, run with `python3`).
+  Do not run `mission_state_node` alongside it -- it would arm on the same
+  START; the hover mission refuses START while it is running.
+
+Workspace README (architecture, deployment, hardware checklist):
+`NidarFiles/README.md`.

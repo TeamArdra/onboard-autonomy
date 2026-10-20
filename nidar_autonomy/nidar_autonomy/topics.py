@@ -34,6 +34,11 @@ MISSION_STATES = ("idle", "entering", "searching", "exiting", "complete", "abort
 # subscriptions, never published to from this repo except where noted.
 FCU_STATE_TOPIC = "/mavros/state"
 BATTERY_TOPIC = "/mavros/battery"
+# Relayed to the GCS over the radio by radio_command_node (radio_telemetry.py).
+LOCAL_POSITION_TOPIC = "/mavros/local_position/pose"
+LOCAL_VELOCITY_TOPIC = "/mavros/local_position/velocity_local"
+IMU_TOPIC = "/mavros/imu/data"
+FCU_STATUSTEXT_TOPIC = "/mavros/statustext/recv"
 SCAN_TOPIC = "/scan"
 
 # Localization: a future SLAM pipeline's pose estimate, fed back to the FCU's
@@ -83,3 +88,28 @@ SIMULATION_PLANNED_PATH_TOPIC = "/simulation/planned_path"
 SIMULATION_TELEMETRY_STATE_TOPIC = "/simulation/telemetry/state"
 
 VALID_SIMULATION_COMMANDS = ("run", "reset")
+
+# -- Radio command path + hover mission ---------------------------------------
+#
+# radio_command_node.py receives START/ABORT over the MicroLR900 radio and
+# publishes them on COMMAND_TOPIC above (through command_node's normal
+# validation). Before a START it publishes MISSION_SELECT_TOPIC
+# ({"mission_id": "hover", ...}) -- routing metadata, not a command: the
+# hover mission only acts on a "start" that was immediately preceded by a
+# selection naming it.
+MISSION_SELECT_TOPIC = "/gcs/mission_select"
+
+# The hover mission's status (JSON std_msgs/String, ~2 Hz). Same topic and
+# field names the GCS already displays for a hover flight test
+# (custom-gcs FlightTestStatusResponse), with execution_mode "real".
+# radio_command_node also uses it as the mission's liveness signal.
+HOVER_STATUS_TOPIC = "/flight_test/status"
+
+# The motor test mission's status (JSON std_msgs/String, ~2 Hz), same shape
+# as HOVER_STATUS_TOPIC with scenario "motor_test". Also its liveness signal.
+MOTOR_TEST_STATUS_TOPIC = "/motor_test/status"
+
+# radio_command_node's own status (JSON std_msgs/String, 1 Hz): serial
+# port, last packet, last command and its ACK -- for local debugging on the
+# Jetson (`ros2 topic echo`); the GCS gets the same facts over the radio.
+RADIO_STATUS_TOPIC = "/radio/status"
